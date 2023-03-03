@@ -1,23 +1,31 @@
 import Router from "koa-router";
+import { isUndefined } from "lodash";
 import { Op, WhereOptions } from "sequelize";
 import { NotFoundError } from "@server/errors";
 import auth from "@server/middlewares/authentication";
 import { Document, User, Event, Share, Team, Collection } from "@server/models";
 import { authorize } from "@server/policies";
 import { presentShare, presentPolicies } from "@server/presenters";
+import { APIContext } from "@server/types";
 import { assertUuid, assertSort, assertPresent } from "@server/validation";
 import pagination from "./middlewares/pagination";
 
 const router = new Router();
 
-router.post("shares.info", auth(), async (ctx) => {
-  const { id, documentId, apiVersion } = ctx.body;
-  assertUuid(id || documentId, "id or documentId is required");
+router.post("shares.info", auth(), async (ctx: APIContext) => {
+  const { id, documentId } = ctx.request.body;
+  assertPresent(id || documentId, "id or documentId is required");
+  if (id) {
+    assertUuid(id, "id is must be a uuid");
+  }
+  if (documentId) {
+    assertUuid(documentId, "documentId is must be a uuid");
+  }
 
-  const { user } = ctx.state;
+  const { user } = ctx.state.auth;
   const shares = [];
   const share = await Share.scope({
-    method: ["withCollection", user.id],
+    method: ["withCollectionPermissions", user.id],
   }).findOne({
     where: id
       ? {
@@ -35,36 +43,24 @@ router.post("shares.info", auth(), async (ctx) => {
         },
   });
 
-  // Deprecated API response returns just the share for the current documentId
-  if (apiVersion !== 2) {
-    if (!share || !share.document) {
-      ctx.response.status = 204;
-      return;
-    }
-
-    authorize(user, "read", share);
-    ctx.body = {
-      data: presentShare(share, user.isAdmin),
-      policies: presentPolicies(user, [share]),
-    };
-    return;
-  }
-
-  // API version 2 returns the response for the current documentId and any
-  // parent documents that are publicly shared and accessible to the user
+  // We return the response for the current documentId and any parent documents
+  // that are publicly shared and accessible to the user
   if (share && share.document) {
     authorize(user, "read", share);
     shares.push(share);
   }
 
   if (documentId) {
-    const document = await Document.scope("withCollection").findByPk(
-      documentId
-    );
-    const parentIds = document?.collection?.getDocumentParents(documentId);
+    const document = await Document.findByPk(documentId, {
+      userId: user.id,
+    });
+    authorize(user, "read", document);
+
+    const collection = await document.$get("collection");
+    const parentIds = collection?.getDocumentParents(documentId);
     const parentShare = parentIds
       ? await Share.scope({
-          method: ["withCollection", user.id],
+          method: ["withCollectionPermissions", user.id],
         }).findOne({
           where: {
             documentId: parentIds,
@@ -97,15 +93,15 @@ router.post("shares.info", auth(), async (ctx) => {
   };
 });
 
-router.post("shares.list", auth(), pagination(), async (ctx) => {
-  let { direction } = ctx.body;
-  const { sort = "updatedAt" } = ctx.body;
+router.post("shares.list", auth(), pagination(), async (ctx: APIContext) => {
+  let { direction } = ctx.request.body;
+  const { sort = "updatedAt" } = ctx.request.body;
   if (direction !== "ASC") {
     direction = "DESC";
   }
   assertSort(sort, Share);
 
-  const { user } = ctx.state;
+  const { user } = ctx.state.auth;
   const where: WhereOptions<Share> = {
     teamId: user.teamId,
     userId: user.id,
@@ -120,60 +116,64 @@ router.post("shares.list", auth(), pagination(), async (ctx) => {
   }
 
   const collectionIds = await user.collectionIds();
-  const shares = await Share.findAll({
-    where,
-    order: [[sort, direction]],
-    include: [
-      {
-        model: Document,
-        required: true,
-        paranoid: true,
-        as: "document",
-        where: {
-          collectionId: collectionIds,
-        },
-        include: [
-          {
-            model: Collection.scope({
-              method: ["withMembership", user.id],
-            }),
-            as: "collection",
+
+  const [shares, total] = await Promise.all([
+    Share.findAll({
+      where,
+      order: [[sort, direction]],
+      include: [
+        {
+          model: Document,
+          required: true,
+          paranoid: true,
+          as: "document",
+          where: {
+            collectionId: collectionIds,
           },
-        ],
-      },
-      {
-        model: User,
-        required: true,
-        as: "user",
-      },
-      {
-        model: Team,
-        required: true,
-        as: "team",
-      },
-    ],
-    offset: ctx.state.pagination.offset,
-    limit: ctx.state.pagination.limit,
-  });
+          include: [
+            {
+              model: Collection.scope({
+                method: ["withMembership", user.id],
+              }),
+              as: "collection",
+            },
+          ],
+        },
+        {
+          model: User,
+          required: true,
+          as: "user",
+        },
+        {
+          model: Team,
+          required: true,
+          as: "team",
+        },
+      ],
+      offset: ctx.state.pagination.offset,
+      limit: ctx.state.pagination.limit,
+    }),
+    Share.count({ where }),
+  ]);
 
   ctx.body = {
-    pagination: ctx.state.pagination,
+    pagination: { ...ctx.state.pagination, total },
     data: shares.map((share) => presentShare(share, user.isAdmin)),
     policies: presentPolicies(user, shares),
   };
 });
 
-router.post("shares.update", auth(), async (ctx) => {
-  const { id, includeChildDocuments, published } = ctx.body;
+router.post("shares.update", auth(), async (ctx: APIContext) => {
+  const { id, includeChildDocuments, published, urlId } = ctx.request.body;
   assertUuid(id, "id is required");
 
-  const { user } = ctx.state;
+  const { user } = ctx.state.auth;
   const team = await Team.findByPk(user.teamId);
   authorize(user, "share", team);
 
   // fetch the share with document and collection.
   const share = await Share.scope({
-    method: ["withCollection", user.id],
+    method: ["withCollectionPermissions", user.id],
   }).findByPk(id);
 
   authorize(user, "update", share);
@@ -191,6 +191,10 @@ router.post("shares.update", auth(), async (ctx) => {
 
   if (includeChildDocuments !== undefined) {
     share.includeChildDocuments = includeChildDocuments;
+  }
+
+  if (!isUndefined(urlId)) {
+    share.urlId = urlId;
   }
 
   await share.save();
@@ -212,11 +216,11 @@ router.post("shares.update", auth(), async (ctx) => {
   };
 });
 
-router.post("shares.create", auth(), async (ctx) => {
-  const { documentId } = ctx.body;
+router.post("shares.create", auth(), async (ctx: APIContext) => {
+  const { documentId } = ctx.request.body;
   assertPresent(documentId, "documentId is required");
 
-  const { user } = ctx.state;
+  const { user } = ctx.state.auth;
   const document = await Document.findByPk(documentId, {
     userId: user.id,
   });
@@ -264,11 +268,11 @@ router.post("shares.create", auth(), async (ctx) => {
   };
 });
 
-router.post("shares.revoke", auth(), async (ctx) => {
-  const { id } = ctx.body;
+router.post("shares.revoke", auth(), async (ctx: APIContext) => {
+  const { id } = ctx.request.body;
   assertUuid(id, "id is required");
 
-  const { user } = ctx.state;
+  const { user } = ctx.state.auth;
   const share = await Share.findByPk(id);
 
   if (!share?.document) {

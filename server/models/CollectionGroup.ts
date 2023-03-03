@@ -4,22 +4,40 @@ import {
   Default,
   ForeignKey,
   IsIn,
-  Model,
   Table,
   DataType,
+  Scopes,
 } from "sequelize-typescript";
+import { CollectionPermission } from "@shared/types";
 import Collection from "./Collection";
 import Group from "./Group";
 import User from "./User";
+import BaseModel from "./base/BaseModel";
 import Fix from "./decorators/Fix";
 
+@Scopes(() => ({
+  withGroup: {
+    include: [
+      {
+        association: "group",
+      },
+    ],
+  },
+  withCollection: {
+    include: [
+      {
+        association: "collection",
+      },
+    ],
+  },
+}))
 @Table({ tableName: "collection_groups", modelName: "collection_group" })
 @Fix
-class CollectionGroup extends Model {
-  @Default("read_write")
-  @IsIn([["read", "read_write", "maintainer"]])
-  @Column
-  permission: string;
+class CollectionGroup extends BaseModel {
+  @Default(CollectionPermission.ReadWrite)
+  @IsIn([Object.values(CollectionPermission)])
+  @Column(DataType.STRING)
+  permission: CollectionPermission;
 
   // associations
 

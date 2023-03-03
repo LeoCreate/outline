@@ -4,25 +4,47 @@ import {
   Column,
   Table,
   DataType,
+  Scopes,
+  IsIn,
 } from "sequelize-typescript";
+import { IntegrationType, IntegrationService } from "@shared/types";
+import type { IntegrationSettings } from "@shared/types";
 import Collection from "./Collection";
 import IntegrationAuthentication from "./IntegrationAuthentication";
 import Team from "./Team";
 import User from "./User";
-import BaseModel from "./base/BaseModel";
+import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
 
+export enum UserCreatableIntegrationService {
+  Diagrams = "diagrams",
+  GoogleAnalytics = "google-analytics",
+}
+
+@Scopes(() => ({
+  withAuthentication: {
+    include: [
+      {
+        model: IntegrationAuthentication,
+        as: "authentication",
+        required: true,
+      },
+    ],
+  },
+}))
 @Table({ tableName: "integrations", modelName: "integration" })
 @Fix
-class Integration extends BaseModel {
-  @Column
-  type: string;
+class Integration<T = unknown> extends IdModel {
+  @IsIn([Object.values(IntegrationType)])
+  @Column(DataType.STRING)
+  type: IntegrationType;
 
-  @Column
-  service: string;
+  @IsIn([Object.values(IntegrationService)])
+  @Column(DataType.STRING)
+  service: IntegrationService;
 
   @Column(DataType.JSONB)
-  settings: any;
+  settings: IntegrationSettings<T>;
 
   @Column(DataType.ARRAY(DataType.STRING))
   events: string[];

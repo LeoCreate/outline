@@ -1,22 +1,33 @@
 import { pick } from "lodash";
-import { set, computed, observable } from "mobx";
+import { set, observable } from "mobx";
 import { getFieldsForModel } from "./decorators/Field";
 
-export default class BaseModel {
+export default abstract class BaseModel {
   @observable
   id: string;
 
   @observable
   isSaving: boolean;
 
+  @observable
+  isNew: boolean;
+
+  createdAt: string;
+
+  updatedAt: string;
+
   store: any;
 
   constructor(fields: Record<string, any>, store: any) {
     this.updateFromJson(fields);
+    this.isNew = !this.id;
     this.store = store;
   }
 
-  save = async (params?: Record<string, any>) => {
+  save = async (
+    params?: Record<string, any>,
+    options?: Record<string, string | boolean | number | undefined>
+  ) => {
     this.isSaving = true;
 
     try {
@@ -25,10 +36,19 @@ export default class BaseModel {
         params = this.toAPI();
       }
 
-      const model = await this.store.save({ ...params, id: this.id });
+      const model = await this.store.save(
+        {
+          ...params,
+          id: this.id,
+        },
+        {
+          ...options,
+          isNew: this.isNew,
+        }
+      );
 
       // if saving is successful set the new values on the model itself
-      set(this, { ...params, ...model });
+      set(this, { ...params, ...model, isNew: false });
 
       this.persistedAttributes = this.toAPI();
 
@@ -39,7 +59,8 @@ export default class BaseModel {
   };
 
   updateFromJson = (data: any) => {
-    set(this, data);
+    //const isNew = !data.id && !this.id && this.isNew;
+    set(this, { ...data, isNew: false });
     this.persistedAttributes = this.toAPI();
   };
 
@@ -87,7 +108,9 @@ export default class BaseModel {
       if (
         // eslint-disable-next-line no-prototype-builtins
         this.hasOwnProperty(property) &&
-        !["persistedAttributes", "store", "isSaving"].includes(property)
+        !["persistedAttributes", "store", "isSaving", "isNew"].includes(
+          property
+        )
       ) {
         output[property] = this[property];
       }
@@ -112,16 +135,6 @@ export default class BaseModel {
     return (
       JSON.stringify(this.persistedAttributes) !== JSON.stringify(attributes)
     );
-  }
-
-  /**
-   * Returns a boolean indicating whether the model has been persisted to db
-   *
-   * @returns boolean true if the model has never been persisted
-   */
-  @computed
-  get isNew(): boolean {
-    return !this.id;
   }
 
   protected persistedAttributes: Partial<BaseModel> = {};

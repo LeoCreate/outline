@@ -1,14 +1,13 @@
 import invariant from "invariant";
-import { orderBy } from "lodash";
+import { lowerFirst, orderBy } from "lodash";
 import { observable, action, computed, runInAction } from "mobx";
 import { Class } from "utility-types";
 import RootStore from "~/stores/RootStore";
 import BaseModel from "~/models/BaseModel";
 import Policy from "~/models/Policy";
-import { PaginationParams } from "~/types";
+import { PaginationParams, PartialWithId } from "~/types";
 import { client } from "~/utils/ApiClient";
-
-type PartialWithId<T> = Partial<T> & { id: string };
+import { AuthorizationError, NotFoundError } from "~/utils/errors";
 
 export enum RPCAction {
   Info = "info",
@@ -19,21 +18,13 @@ export enum RPCAction {
   Count = "count",
 }
 
-type FetchPageParams = PaginationParams & {
-  documentId?: string;
-  query?: string;
-  filter?: string;
-};
-
-function modelNameFromClassName(string: string) {
-  return string.charAt(0).toLowerCase() + string.slice(1);
-}
+type FetchPageParams = PaginationParams & Record<string, any>;
 
 export const DEFAULT_PAGINATION_LIMIT = 25;
 
 export const PAGINATION_SYMBOL = Symbol.for("pagination");
 
-export default class BaseStore<T extends BaseModel> {
+export default abstract class BaseStore<T extends BaseModel> {
   @observable
   data: Map<string, T> = new Map();
 
@@ -66,7 +57,7 @@ export default class BaseStore<T extends BaseModel> {
   constructor(rootStore: RootStore, model: Class<T>) {
     this.rootStore = rootStore;
     this.model = model;
-    this.modelName = modelNameFromClassName(model.name);
+    this.modelName = lowerFirst(model.name).replace(/\d$/, "");
 
     if (!this.apiEndpoint) {
       this.apiEndpoint = `${this.modelName}s`;
@@ -110,11 +101,15 @@ export default class BaseStore<T extends BaseModel> {
     this.data.delete(id);
   }
 
-  save(params: Partial<T>): Promise<T> {
-    if (params.id) {
-      return this.update(params);
+  save(
+    params: Partial<T>,
+    options: Record<string, string | boolean | number | undefined> = {}
+  ): Promise<T> {
+    const { isNew, ...rest } = options;
+    if (isNew || !params.id) {
+      return this.create(params, rest);
     }
-    return this.create(params);
+    return this.update(params, rest);
   }
 
   get(id: string): T | undefined {
@@ -138,7 +133,7 @@ export default class BaseStore<T extends BaseModel> {
         ...options,
       });
 
-      invariant(res && res.data, "Data should be available");
+      invariant(res?.data, "Data should be available");
       this.addPolicies(res.policies);
       return this.add(res.data);
     } finally {
@@ -163,7 +158,7 @@ export default class BaseStore<T extends BaseModel> {
         ...options,
       });
 
-      invariant(res && res.data, "Data should be available");
+      invariant(res?.data, "Data should be available");
       this.addPolicies(res.policies);
       return this.add(res.data);
     } finally {
@@ -175,6 +170,10 @@ export default class BaseStore<T extends BaseModel> {
   async delete(item: T, options: Record<string, any> = {}) {
     if (!this.actions.includes(RPCAction.Delete)) {
       throw new Error(`Cannot delete ${this.modelName}`);
+    }
+
+    if (item.isNew) {
+      return this.remove(item.id);
     }
 
     this.isSaving = true;
@@ -206,11 +205,11 @@ export default class BaseStore<T extends BaseModel> {
       const res = await client.post(`/${this.apiEndpoint}.info`, {
         id,
       });
-      invariant(res && res.data, "Data should be available");
+      invariant(res?.data, "Data should be available");
       this.addPolicies(res.policies);
       return this.add(res.data);
     } catch (err) {
-      if (err.statusCode === 403) {
+      if (err instanceof AuthorizationError || err instanceof NotFoundError) {
         this.remove(id);
       }
 
@@ -221,7 +220,7 @@ export default class BaseStore<T extends BaseModel> {
   }
 
   @action
-  fetchPage = async (params: FetchPageParams | undefined): Promise<any> => {
+  fetchPage = async (params: FetchPageParams | undefined): Promise<T[]> => {
     if (!this.actions.includes(RPCAction.List)) {
       throw new Error(`Cannot list ${this.modelName}`);
     }
@@ -230,7 +229,7 @@ export default class BaseStore<T extends BaseModel> {
 
     try {
       const res = await client.post(`/${this.apiEndpoint}.list`, params);
-      invariant(res && res.data, "Data not available");
+      invariant(res?.data, "Data not available");
 
       runInAction(`list#${this.modelName}`, () => {
         this.addPolicies(res.policies);

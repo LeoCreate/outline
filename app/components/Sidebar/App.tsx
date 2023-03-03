@@ -13,22 +13,23 @@ import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useCurrentUser from "~/hooks/useCurrentUser";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
-import AccountMenu from "~/menus/AccountMenu";
 import OrganizationMenu from "~/menus/OrganizationMenu";
+import Desktop from "~/utils/Desktop";
 import {
   homePath,
   draftsPath,
   templatesPath,
   searchPath,
 } from "~/utils/routeHelpers";
-import Avatar from "../Avatar";
 import TeamLogo from "../TeamLogo";
 import Sidebar from "./Sidebar";
 import ArchiveLink from "./components/ArchiveLink";
 import Collections from "./components/Collections";
+import DragPlaceholder from "./components/DragPlaceholder";
+import HeaderButton, { HeaderButtonProps } from "./components/HeaderButton";
+import HistoryNavigation from "./components/HistoryNavigation";
 import Section from "./components/Section";
 import SidebarAction from "./components/SidebarAction";
-import SidebarButton from "./components/SidebarButton";
 import SidebarLink from "./components/SidebarLink";
 import Starred from "./components/Starred";
 import TrashLink from "./components/TrashLink";
@@ -38,12 +39,14 @@ function AppSidebar() {
   const { documents } = useStores();
   const team = useCurrentTeam();
   const user = useCurrentUser();
-  const can = usePolicy(team.id);
+  const can = usePolicy(team);
 
   React.useEffect(() => {
-    documents.fetchDrafts();
-    documents.fetchTemplates();
-  }, [documents]);
+    if (!user.isViewer) {
+      documents.fetchDrafts();
+      documents.fetchTemplates();
+    }
+  }, [documents, user.isViewer]);
 
   const [dndArea, setDndArea] = React.useState();
   const handleSidebarRef = React.useCallback((node) => setDndArea(node), []);
@@ -56,15 +59,26 @@ function AppSidebar() {
 
   return (
     <Sidebar ref={handleSidebarRef}>
+      <HistoryNavigation />
       {dndArea && (
         <DndProvider backend={HTML5Backend} options={html5Options}>
+          <DragPlaceholder />
+
           <OrganizationMenu>
-            {(props) => (
-              <SidebarButton
+            {(props: HeaderButtonProps) => (
+              <HeaderButton
                 {...props}
                 title={team.name}
                 image={
-                  <StyledTeamLogo src={team.avatarUrl} width={32} height={32} />
+                  <TeamLogo
+                    model={team}
+                    size={Desktop.hasInsetTitlebar() ? 24 : 32}
+                    alt={t("Logo")}
+                  />
+                }
+                style={
+                  // Move the logo over to align with smaller size
+                  Desktop.hasInsetTitlebar() ? { paddingLeft: 8 } : undefined
                 }
                 showDisclosure
               />
@@ -128,35 +142,11 @@ function AppSidebar() {
               <SidebarAction action={inviteUser} />
             </Section>
           </Scrollable>
-          <AccountMenu>
-            {(props) => (
-              <SidebarButton
-                {...props}
-                showMoreMenu
-                title={user.name}
-                image={
-                  <StyledAvatar
-                    src={user.avatarUrl}
-                    size={24}
-                    showBorder={false}
-                  />
-                }
-              />
-            )}
-          </AccountMenu>
         </DndProvider>
       )}
     </Sidebar>
   );
 }
-
-const StyledTeamLogo = styled(TeamLogo)`
-  margin-right: 4px;
-`;
-
-const StyledAvatar = styled(Avatar)`
-  margin-left: 4px;
-`;
 
 const Drafts = styled(Text)`
   margin: 0 4px;

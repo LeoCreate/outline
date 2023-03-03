@@ -7,35 +7,30 @@ import Button from "~/components/Button";
 import Heading from "~/components/Heading";
 import PaginatedList from "~/components/PaginatedList";
 import Scene from "~/components/Scene";
-import Subheading from "~/components/Subheading";
 import Text from "~/components/Text";
 import useCurrentUser from "~/hooks/useCurrentUser";
 import useStores from "~/hooks/useStores";
 import useToasts from "~/hooks/useToasts";
+import ExportDialog from "../../components/ExportDialog";
 import FileOperationListItem from "./components/FileOperationListItem";
 
 function Export() {
   const { t } = useTranslation();
   const user = useCurrentUser();
-  const { fileOperations, collections } = useStores();
+  const { fileOperations, dialogs } = useStores();
   const { showToast } = useToasts();
-  const [isLoading, setLoading] = React.useState(false);
-  const [isExporting, setExporting] = React.useState(false);
 
-  const handleExport = React.useCallback(
+  const handleOpenDialog = React.useCallback(
     async (ev: React.SyntheticEvent) => {
       ev.preventDefault();
-      setLoading(true);
 
-      try {
-        await collections.export();
-        setExporting(true);
-        showToast(t("Export in progress…"));
-      } finally {
-        setLoading(false);
-      }
+      dialogs.openModal({
+        title: t("Export data"),
+        isCentered: true,
+        content: <ExportDialog onSubmit={dialogs.closeAllModals} />,
+      });
     },
-    [t, collections, showToast]
+    [dialogs, t]
   );
 
   const handleDelete = React.useCallback(
@@ -57,7 +52,7 @@ function Export() {
       <Heading>{t("Export")}</Heading>
       <Text type="secondary">
         <Trans
-          defaults="A full export might take some time, consider exporting a single document or collection. The exported data is a zip of your documents in Markdown format. You may leave this page once the export has started – we will email a link to <em>{{ userEmail }}</em> when it’s complete."
+          defaults="A full export might take some time, consider exporting a single document or collection. The exported data is a zip of your documents in Markdown format. You may leave this page once the export has started – if you have notifications enabled, we will email a link to <em>{{ userEmail }}</em> when it’s complete."
           values={{
             userEmail: user.email,
           }}
@@ -66,17 +61,8 @@ function Export() {
           }}
         />
       </Text>
-      <Button
-        type="submit"
-        onClick={handleExport}
-        disabled={isLoading || isExporting}
-        primary
-      >
-        {isExporting
-          ? t("Export Requested")
-          : isLoading
-          ? `${t("Requesting Export")}…`
-          : t("Export Data")}
+      <Button type="submit" onClick={handleOpenDialog}>
+        {t("Export data")}…
       </Button>
       <br />
       <PaginatedList
@@ -86,11 +72,11 @@ function Export() {
           type: "export",
         }}
         heading={
-          <Subheading>
+          <h2>
             <Trans>Recent exports</Trans>
-          </Subheading>
+          </h2>
         }
-        renderItem={(item) => (
+        renderItem={(item: FileOperation) => (
           <FileOperationListItem
             key={item.id}
             fileOperation={item}

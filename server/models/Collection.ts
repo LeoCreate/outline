@@ -1,12 +1,6 @@
 import { find, findIndex, remove, uniq } from "lodash";
 import randomstring from "randomstring";
-import {
-  Identifier,
-  Transaction,
-  Op,
-  FindOptions,
-  SaveOptions,
-} from "sequelize";
+import { Identifier, Transaction, Op, FindOptions } from "sequelize";
 import {
   Sequelize,
   Table,
@@ -24,24 +18,28 @@ import {
   ForeignKey,
   Scopes,
   DataType,
+  Length as SimpleLength,
 } from "sequelize-typescript";
 import isUUID from "validator/lib/isUUID";
+import type { CollectionSort } from "@shared/types";
+import { CollectionPermission, NavigationNode } from "@shared/types";
 import { sortNavigationNodes } from "@shared/utils/collections";
 import { SLUG_URL_REGEX } from "@shared/utils/urlHelpers";
+import { CollectionValidation } from "@shared/validations";
 import slugify from "@server/utils/slugify";
-import { NavigationNode, CollectionSort } from "~/types";
 import CollectionGroup from "./CollectionGroup";
 import CollectionUser from "./CollectionUser";
 import Document from "./Document";
+import FileOperation from "./FileOperation";
 import Group from "./Group";
 import GroupUser from "./GroupUser";
 import Team from "./Team";
 import User from "./User";
 import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
-
-// without this indirection, the app crashes on starup
-type Sort = CollectionSort;
+import IsHexColor from "./validators/IsHexColor";
+import Length from "./validators/Length";
+import NotContainsUrl from "./validators/NotContainsUrl";
 
 @Scopes(() => ({
   withAllMemberships: {
@@ -79,6 +77,15 @@ type Sort = CollectionSort;
       },
     ],
   },
+  withUser: () => ({
+    include: [
+      {
+        model: User,
+        required: true,
+        as: "user",
+      },
+    ],
+  }),
   withMembership: (userId: string) => ({
     include: [
       {
@@ -124,28 +131,51 @@ type Sort = CollectionSort;
 @Table({ tableName: "collections", modelName: "collection" })
 @Fix
 class Collection extends ParanoidModel {
+  @SimpleLength({
+    min: 10,
+    max: 10,
+    msg: `urlId must be 10 characters`,
+  })
   @Unique
   @Column
   urlId: string;
 
+  @NotContainsUrl
+  @Length({
+    max: CollectionValidation.maxNameLength,
+    msg: `name must be ${CollectionValidation.maxNameLength} characters or less`,
+  })
   @Column
   name: string;
 
+  @Length({
+    max: CollectionValidation.maxDescriptionLength,
+    msg: `description must be ${CollectionValidation.maxDescriptionLength} characters or less`,
+  })
   @Column
-  description: string;
+  description: string | null;
 
+  @Length({
+    max: 50,
+    msg: `icon must be 50 characters or less`,
+  })
   @Column
   icon: string | null;
 
+  @IsHexColor
   @Column
   color: string | null;
 
+  @Length({
+    max: 50,
+    msg: `index must 50 characters or less`,
+  })
   @Column
   index: string | null;
 
-  @IsIn([["read", "read_write"]])
-  @Column
-  permission: "read" | "read_write" | null;
+  @IsIn([Object.values(CollectionPermission)])
+  @Column(DataType.STRING)
+  permission: CollectionPermission | null;
 
   @Default(false)
   @Column
@@ -158,10 +188,11 @@ class Collection extends ParanoidModel {
   @Column
   sharing: boolean;
 
+  @Default({ field: "title", direction: "asc" })
   @Column({
     type: DataType.JSONB,
     validate: {
-      isSort(value: Sort) {
+      isSort(value: CollectionSort) {
         if (
           typeof value !== "object" ||
           !value.direction ||
@@ -181,7 +212,7 @@ class Collection extends ParanoidModel {
       },
     },
   })
-  sort: Sort | null;
+  sort: CollectionSort;
 
   // getters
 
@@ -223,14 +254,14 @@ class Collection extends ParanoidModel {
     model: Collection,
     options: { transaction: Transaction }
   ) {
-    if (model.permission !== "read_write") {
+    if (model.permission !== CollectionPermission.ReadWrite) {
       return CollectionUser.findOrCreate({
         where: {
           collectionId: model.id,
           userId: model.createdById,
         },
         defaults: {
-          permission: "read_write",
+          permission: CollectionPermission.ReadWrite,
           createdById: model.createdById,
         },
         transaction: options.transaction,
@@ -241,6 +272,13 @@ class Collection extends ParanoidModel {
   }
 
   // associations
+
+  @BelongsTo(() => FileOperation, "importId")
+  import: FileOperation | null;
+
+  @ForeignKey(() => FileOperation)
+  @Column(DataType.UUID)
+  importId: string | null;
 
   @HasMany(() => Document, "collectionId")
   documents: Document[];
@@ -308,9 +346,12 @@ class Collection extends ParanoidModel {
    * @param id uuid or urlId
    * @returns collection instance
    */
-  static async findByPk(id: Identifier, options: FindOptions<Collection> = {}) {
+  static async findByPk(
+    id: Identifier,
+    options: FindOptions<Collection> = {}
+  ): Promise<Collection | null> {
     if (typeof id !== "string") {
-      return undefined;
+      return null;
     }
 
     if (isUUID(id)) {
@@ -332,7 +373,7 @@ class Collection extends ParanoidModel {
       });
     }
 
-    return undefined;
+    return null;
   }
 
   /**
@@ -359,10 +400,6 @@ class Collection extends ParanoidModel {
     if (!this.documentStructure) {
       return null;
     }
-    const sort: Sort = this.sort || {
-      field: "title",
-      direction: "asc",
-    };
 
     let result!: NavigationNode | undefined;
 
@@ -396,12 +433,12 @@ class Collection extends ParanoidModel {
 
     return {
       ...result,
-      children: sortNavigationNodes(result.children, sort),
+      children: sortNavigationNodes(result.children, this.sort),
     };
   };
 
-  deleteDocument = async function (document: Document) {
-    await this.removeDocumentInStructure(document);
+  deleteDocument = async function (document: Document, options?: FindOptions) {
+    await this.removeDocumentInStructure(document, options);
 
     // Helper to destroy all child documents for a document
     const loopChildren = async (
@@ -419,13 +456,13 @@ class Collection extends ParanoidModel {
       });
     };
 
-    await loopChildren(document.id);
-    await document.destroy();
+    await loopChildren(document.id, options);
+    await document.destroy(options);
   };
 
   removeDocumentInStructure = async function (
     document: Document,
-    options?: SaveOptions<Collection> & {
+    options?: FindOptions & {
       save?: boolean;
     }
   ) {
@@ -434,66 +471,55 @@ class Collection extends ParanoidModel {
     }
 
     let result: [NavigationNode, number] | undefined;
-    let transaction;
 
-    try {
-      // documentStructure can only be updated by one request at the time
-      transaction = await this.sequelize.transaction();
+    const removeFromChildren = async (
+      children: NavigationNode[],
+      id: string
+    ) => {
+      children = await Promise.all(
+        children.map(async (childDocument) => {
+          return {
+            ...childDocument,
+            children: await removeFromChildren(childDocument.children, id),
+          };
+        })
+      );
+      const match = find(children, {
+        id,
+      });
 
-      const removeFromChildren = async (
-        children: NavigationNode[],
-        id: string
-      ) => {
-        children = await Promise.all(
-          children.map(async (childDocument) => {
-            return {
-              ...childDocument,
-              children: await removeFromChildren(childDocument.children, id),
-            };
-          })
-        );
-        const match = find(children, {
-          id,
-        });
-
-        if (match) {
-          if (!result) {
-            result = [
-              match,
-              findIndex(children, {
-                id,
-              }),
-            ];
-          }
-
-          remove(children, {
-            id,
-          });
+      if (match) {
+        if (!result) {
+          result = [
+            match,
+            findIndex(children, {
+              id,
+            }),
+          ];
         }
 
-        return children;
-      };
+        remove(children, {
+          id,
+        });
+      }
 
-      this.documentStructure = await removeFromChildren(
-        this.documentStructure,
-        document.id
-      );
+      return children;
+    };
 
-      // Sequelize doesn't seem to set the value with splice on JSONB field
-      // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
-      this.changed("documentStructure", true);
+    this.documentStructure = await removeFromChildren(
+      this.documentStructure,
+      document.id
+    );
+
+    // Sequelize doesn't seem to set the value with splice on JSONB field
+    // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
+    this.changed("documentStructure", true);
+
+    if (options?.save !== false) {
       await this.save({
         ...options,
         fields: ["documentStructure"],
-        transaction,
       });
-      await transaction.commit();
-    } catch (err) {
-      if (transaction) {
-        await transaction.rollback();
-      }
-
-      throw err;
     }
 
     return result;
@@ -523,78 +549,44 @@ class Collection extends ParanoidModel {
     return result;
   };
 
-  isChildDocument = function (
-    parentDocumentId?: string,
-    documentId?: string
-  ): boolean {
-    let result = false;
-
-    const loopChildren = (documents: NavigationNode[], input: string[]) => {
-      if (result) {
-        return;
-      }
-
-      documents.forEach((document) => {
-        const parents = [...input];
-
-        if (document.id === documentId && parentDocumentId) {
-          result = parents.includes(parentDocumentId);
-        } else {
-          parents.push(document.id);
-          loopChildren(document.children, parents);
-        }
-      });
-    };
-
-    loopChildren(this.documentStructure, []);
-    return result;
-  };
-
   /**
    * Update document's title and url in the documentStructure
    */
-  updateDocument = async function (updatedDocument: Document) {
+  updateDocument = async function (
+    updatedDocument: Document,
+    options?: { transaction?: Transaction | null | undefined }
+  ) {
     if (!this.documentStructure) {
       return;
     }
-    let transaction;
 
-    try {
-      // documentStructure can only be updated by one request at the time
-      transaction = await this.sequelize.transaction();
-      const { id } = updatedDocument;
+    const { id } = updatedDocument;
 
-      const updateChildren = (documents: NavigationNode[]) => {
-        return documents.map((document) => {
+    const updateChildren = (documents: NavigationNode[]) => {
+      return Promise.all(
+        documents.map(async (document) => {
           if (document.id === id) {
             document = {
-              ...(updatedDocument.toJSON() as NavigationNode),
+              ...(await updatedDocument.toNavigationNode(options)),
               children: document.children,
             };
           } else {
-            document.children = updateChildren(document.children);
+            document.children = await updateChildren(document.children);
           }
 
           return document;
-        });
-      };
+        })
+      );
+    };
 
-      this.documentStructure = updateChildren(this.documentStructure);
-      // Sequelize doesn't seem to set the value with splice on JSONB field
-      // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
-      this.changed("documentStructure", true);
-      await this.save({
-        fields: ["documentStructure"],
-        transaction,
-      });
-      await transaction.commit();
-    } catch (err) {
-      if (transaction) {
-        await transaction.rollback();
-      }
-
-      throw err;
-    }
+    this.documentStructure = await updateChildren(this.documentStructure);
+    // Sequelize doesn't seem to set the value with splice on JSONB field
+    // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
+    this.changed("documentStructure", true);
+    await this.save({
+      fields: ["documentStructure"],
+      ...options,
+    });
 
     return this;
   };
@@ -602,7 +594,7 @@ class Collection extends ParanoidModel {
   addDocumentToStructure = async function (
     document: Document,
     index?: number,
-    options: {
+    options: FindOptions & {
       save?: boolean;
       documentJson?: NavigationNode;
     } = {}
@@ -610,67 +602,51 @@ class Collection extends ParanoidModel {
     if (!this.documentStructure) {
       this.documentStructure = [];
     }
-    let transaction;
 
-    try {
-      // documentStructure can only be updated by one request at a time
-      if (options?.save !== false) {
-        transaction = await this.sequelize.transaction();
-      }
+    // If moving existing document with children, use existing structure
+    const documentJson = {
+      ...(await document.toNavigationNode(options)),
+      ...options.documentJson,
+    };
 
-      // If moving existing document with children, use existing structure
-      const documentJson = { ...document.toJSON(), ...options.documentJson };
+    if (!document.parentDocumentId) {
+      // Note: Index is supported on DB level but it's being ignored
+      // by the API presentation until we build product support for it.
+      this.documentStructure.splice(
+        index !== undefined ? index : this.documentStructure.length,
+        0,
+        documentJson
+      );
+    } else {
+      // Recursively place document
+      const placeDocument = (documentList: NavigationNode[]) => {
+        return documentList.map((childDocument) => {
+          if (document.parentDocumentId === childDocument.id) {
+            childDocument.children.splice(
+              index !== undefined ? index : childDocument.children.length,
+              0,
+              documentJson
+            );
+          } else {
+            childDocument.children = placeDocument(childDocument.children);
+          }
 
-      if (!document.parentDocumentId) {
-        // Note: Index is supported on DB level but it's being ignored
-        // by the API presentation until we build product support for it.
-        this.documentStructure.splice(
-          index !== undefined ? index : this.documentStructure.length,
-          0,
-          documentJson
-        );
-      } else {
-        // Recursively place document
-        const placeDocument = (documentList: NavigationNode[]) => {
-          return documentList.map((childDocument) => {
-            if (document.parentDocumentId === childDocument.id) {
-              childDocument.children.splice(
-                index !== undefined ? index : childDocument.children.length,
-                0,
-                documentJson
-              );
-            } else {
-              childDocument.children = placeDocument(childDocument.children);
-            }
-
-            return childDocument;
-          });
-        };
-
-        this.documentStructure = placeDocument(this.documentStructure);
-      }
-
-      // Sequelize doesn't seem to set the value with splice on JSONB field
-      // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
-      this.changed("documentStructure", true);
-
-      if (options?.save !== false) {
-        await this.save({
-          ...options,
-          fields: ["documentStructure"],
-          transaction,
+          return childDocument;
         });
+      };
 
-        if (transaction) {
-          await transaction.commit();
-        }
-      }
-    } catch (err) {
-      if (transaction) {
-        await transaction.rollback();
-      }
+      this.documentStructure = placeDocument(this.documentStructure);
+    }
 
-      throw err;
+    // Sequelize doesn't seem to set the value with splice on JSONB field
+    // https://github.com/sequelize/sequelize/blob/e1446837196c07b8ff0c23359b958d68af40fd6d/src/model.js#L3937
+    this.changed("documentStructure", true);
+
+    if (options?.save !== false) {
+      await this.save({
+        ...options,
+        fields: ["documentStructure"],
+      });
     }
 
     return this;

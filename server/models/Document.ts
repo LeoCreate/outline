@@ -1,19 +1,19 @@
-import removeMarkdown from "@tommoor/remove-markdown";
-import { compact, find, map, uniq } from "lodash";
+import { compact, uniq } from "lodash";
 import randomstring from "randomstring";
+import type { SaveOptions } from "sequelize";
 import {
+  Sequelize,
   Transaction,
   Op,
-  QueryTypes,
   FindOptions,
   ScopeOptions,
+  WhereOptions,
 } from "sequelize";
 import {
   ForeignKey,
   BelongsTo,
   Column,
   Default,
-  Length,
   PrimaryKey,
   Table,
   BeforeValidate,
@@ -25,18 +25,20 @@ import {
   AfterCreate,
   Scopes,
   DataType,
+  Length as SimpleLength,
+  IsNumeric,
+  IsDate,
 } from "sequelize-typescript";
-import MarkdownSerializer from "slate-md-serializer";
 import isUUID from "validator/lib/isUUID";
-import { MAX_TITLE_LENGTH } from "@shared/constants";
-import { DateFilter } from "@shared/types";
+import type { NavigationNode } from "@shared/types";
 import getTasks from "@shared/utils/getTasks";
 import parseTitle from "@shared/utils/parseTitle";
-import unescape from "@shared/utils/unescape";
 import { SLUG_URL_REGEX } from "@shared/utils/urlHelpers";
+import { DocumentValidation } from "@shared/validations";
 import slugify from "@server/utils/slugify";
 import Backlink from "./Backlink";
 import Collection from "./Collection";
+import FileOperation from "./FileOperation";
 import Revision from "./Revision";
 import Star from "./Star";
 import Team from "./Team";
@@ -44,31 +46,15 @@ import User from "./User";
 import View from "./View";
 import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
-
-type SearchResponse = {
-  results: {
-    ranking: number;
-    context: string;
-    document: Document;
-  }[];
-  totalCount: number;
-};
-
-type SearchOptions = {
-  limit?: number;
-  offset?: number;
-  collectionId?: string;
-  dateFilter?: DateFilter;
-  collaboratorIds?: string[];
-  includeArchived?: boolean;
-  includeDrafts?: boolean;
-};
-
-const serializer = new MarkdownSerializer();
+import DocumentHelper from "./helpers/DocumentHelper";
+import Length from "./validators/Length";
 
 export const DOCUMENT_VERSION = 2;
 
 @DefaultScope(() => ({
+  attributes: {
+    exclude: ["state"],
+  },
   include: [
     {
       model: User,
@@ -88,11 +74,12 @@ export const DOCUMENT_VERSION = 2;
   },
 }))
 @Scopes(() => ({
-  withCollection: (userId: string, paranoid = true) => {
+  withCollectionPermissions: (userId: string, paranoid = true) => {
     if (userId) {
       return {
         include: [
           {
+            attributes: ["id", "permission", "sharing", "teamId", "deletedAt"],
             model: Collection.scope({
               method: ["withMembership", userId],
             }),
@@ -106,13 +93,45 @@ export const DOCUMENT_VERSION = 2;
     return {
       include: [
         {
+          attributes: ["id", "permission", "sharing", "teamId", "deletedAt"],
           model: Collection,
           as: "collection",
+          paranoid,
         },
       ],
     };
   },
-  withUnpublished: {
+  withoutState: {
+    attributes: {
+      exclude: ["state"],
+    },
+  },
+  withCollection: {
+    include: [
+      {
+        model: Collection,
+        as: "collection",
+      },
+    ],
+  },
+  withStateIsEmpty: {
+    attributes: {
+      exclude: ["state"],
+      include: [
+        [
+          Sequelize.literal(`CASE WHEN state IS NULL THEN true ELSE false END`),
+          "stateIsEmpty",
+        ],
+      ],
+    },
+  },
+  withState: {
+    attributes: {
+      // resets to include the state column
+      exclude: [],
+    },
+  },
+  withDrafts: {
     include: [
       {
         model: User,
@@ -148,14 +167,18 @@ export const DOCUMENT_VERSION = 2;
 @Table({ tableName: "documents", modelName: "document" })
 @Fix
 class Document extends ParanoidModel {
+  @SimpleLength({
+    min: 10,
+    max: 10,
+    msg: `urlId must be 10 characters`,
+  })
   @PrimaryKey
   @Column
   urlId: string;
 
   @Length({
-    min: 0,
-    max: MAX_TITLE_LENGTH,
-    msg: `Document title must be less than ${MAX_TITLE_LENGTH} characters`,
+    max: DocumentValidation.maxTitleLength,
+    msg: `Document title must be ${DocumentValidation.maxTitleLength} characters or less`,
   })
   @Column
   title: string;
@@ -163,6 +186,7 @@ class Document extends ParanoidModel {
   @Column(DataType.ARRAY(DataType.STRING))
   previousTitles: string[] = [];
 
+  @IsNumeric
   @Column(DataType.SMALLINT)
   version: number;
 
@@ -172,15 +196,27 @@ class Document extends ParanoidModel {
   @Column
   fullWidth: boolean;
 
+  @SimpleLength({
+    max: 255,
+    msg: `editorVersion must be 255 characters or less`,
+  })
   @Column
   editorVersion: string;
 
+  @Length({
+    max: 1,
+    msg: `Emoji must be a single character`,
+  })
   @Column
   emoji: string | null;
 
   @Column(DataType.TEXT)
   text: string;
 
+  @SimpleLength({
+    max: DocumentValidation.maxStateLength,
+    msg: `Document collaborative state is too large, you must create a new document`,
+  })
   @Column(DataType.BLOB)
   state: Uint8Array;
 
@@ -188,13 +224,16 @@ class Document extends ParanoidModel {
   @Column
   isWelcome: boolean;
 
+  @IsNumeric
   @Default(0)
   @Column(DataType.INTEGER)
   revisionCount: number;
 
+  @IsDate
   @Column
   archivedAt: Date | null;
 
+  @IsDate
   @Column
   publishedAt: Date | null;
 
@@ -218,35 +257,51 @@ class Document extends ParanoidModel {
   // hooks
 
   @BeforeSave
-  static async updateInCollectionStructure(model: Document) {
-    if (!model.publishedAt || model.template) {
+  static async updateTitleInCollectionStructure(
+    model: Document,
+    { transaction }: SaveOptions<Document>
+  ) {
+    // templates, drafts, and archived documents don't appear in the structure
+    // and so never need to be updated when the title changes
+    if (
+      model.archivedAt ||
+      model.template ||
+      !model.publishedAt ||
+      !model.changed("title")
+    ) {
       return;
     }
 
-    const collection = await Collection.findByPk(model.collectionId);
-
+    const collection = await Collection.findByPk(model.collectionId, {
+      transaction,
+      lock: Transaction.LOCK.UPDATE,
+    });
     if (!collection) {
       return;
     }
 
-    await collection.updateDocument(model);
+    await collection.updateDocument(model, { transaction });
     model.collection = collection;
   }
 
   @AfterCreate
   static async addDocumentToCollectionStructure(model: Document) {
-    if (!model.publishedAt || model.template) {
+    if (model.archivedAt || model.template || !model.publishedAt) {
       return;
     }
 
-    const collection = await Collection.findByPk(model.collectionId);
+    return this.sequelize!.transaction(async (transaction: Transaction) => {
+      const collection = await Collection.findByPk(model.collectionId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!collection) {
+        return;
+      }
 
-    if (!collection) {
-      return;
-    }
-
-    await collection.addDocumentToStructure(model, 0);
-    model.collection = collection;
+      await collection.addDocumentToStructure(model, 0, { transaction });
+      model.collection = collection;
+    });
   }
 
   @BeforeValidate
@@ -265,7 +320,7 @@ class Document extends ParanoidModel {
 
   @BeforeUpdate
   static processUpdate(model: Document) {
-    const { emoji } = parseTitle(model.text);
+    const { emoji } = parseTitle(model.title);
     // emoji in the title is split out for easier display
     model.emoji = emoji || null;
 
@@ -296,6 +351,13 @@ class Document extends ParanoidModel {
   }
 
   // associations
+
+  @BelongsTo(() => FileOperation, "importId")
+  import: FileOperation | null;
+
+  @ForeignKey(() => FileOperation)
+  @Column(DataType.UUID)
+  importId: string | null;
 
   @BelongsTo(() => Document, "parentDocumentId")
   parentDocument: Document | null;
@@ -333,7 +395,7 @@ class Document extends ParanoidModel {
   teamId: string;
 
   @BelongsTo(() => Collection, "collectionId")
-  collection: Collection;
+  collection: Collection | null | undefined;
 
   @ForeignKey(() => Collection)
   @Column(DataType.UUID)
@@ -353,7 +415,7 @@ class Document extends ParanoidModel {
 
   static defaultScopeWithUser(userId: string) {
     const collectionScope: Readonly<ScopeOptions> = {
-      method: ["withCollection", userId],
+      method: ["withCollectionPermissions", userId],
     };
     const viewScope: Readonly<ScopeOptions> = {
       method: ["withViews", userId],
@@ -365,14 +427,16 @@ class Document extends ParanoidModel {
     id: string,
     options: FindOptions<Document> & {
       userId?: string;
+      includeState?: boolean;
     } = {}
-  ) {
+  ): Promise<Document | null> {
     // allow default preloading of collection membership if `userId` is passed in find options
     // almost every endpoint needs the collection membership to determine policy permissions.
     const scope = this.scope([
-      "withUnpublished",
+      ...(options.includeState ? [] : ["withoutState"]),
+      "withDrafts",
       {
-        method: ["withCollection", options.userId, options.paranoid],
+        method: ["withCollectionPermissions", options.userId, options.paranoid],
       },
       {
         method: ["withViews", options.userId],
@@ -398,281 +462,69 @@ class Document extends ParanoidModel {
       });
     }
 
-    return undefined;
-  }
-
-  static async searchForTeam(
-    team: Team,
-    query: string,
-    options: SearchOptions = {}
-  ): Promise<SearchResponse> {
-    const limit = options.limit || 15;
-    const offset = options.offset || 0;
-    const wildcardQuery = `${escape(query)}:*`;
-    const collectionIds = await team.collectionIds();
-
-    // If the team has access no public collections then shortcircuit the rest of this
-    if (!collectionIds.length) {
-      return {
-        results: [],
-        totalCount: 0,
-      };
-    }
-
-    // Build the SQL query to get documentIds, ranking, and search term context
-    const whereClause = `
-  "searchVector" @@ to_tsquery('english', :query) AND
-    "teamId" = :teamId AND
-    "collectionId" IN(:collectionIds) AND
-    "deletedAt" IS NULL AND
-    "publishedAt" IS NOT NULL
-  `;
-    const selectSql = `
-    SELECT
-      id,
-      ts_rank(documents."searchVector", to_tsquery('english', :query)) as "searchRanking",
-      ts_headline('english', "text", to_tsquery('english', :query), 'MaxFragments=1, MinWords=20, MaxWords=30') as "searchContext"
-    FROM documents
-    WHERE ${whereClause}
-    ORDER BY
-      "searchRanking" DESC,
-      "updatedAt" DESC
-    LIMIT :limit
-    OFFSET :offset;
-  `;
-    const countSql = `
-    SELECT COUNT(id)
-    FROM documents
-    WHERE ${whereClause}
-  `;
-    const queryReplacements = {
-      teamId: team.id,
-      query: wildcardQuery,
-      collectionIds,
-    };
-    const resultsQuery = this.sequelize!.query(selectSql, {
-      type: QueryTypes.SELECT,
-      replacements: { ...queryReplacements, limit, offset },
-    });
-    const countQuery = this.sequelize!.query(countSql, {
-      type: QueryTypes.SELECT,
-      replacements: queryReplacements,
-    });
-    const [results, [{ count }]]: [any, any] = await Promise.all([
-      resultsQuery,
-      countQuery,
-    ]);
-    // Final query to get associated document data
-    const documents = await this.findAll({
-      where: {
-        id: map(results, "id"),
-      },
-      include: [
-        {
-          model: Collection,
-          as: "collection",
-        },
-        {
-          model: User,
-          as: "createdBy",
-          paranoid: false,
-        },
-        {
-          model: User,
-          as: "updatedBy",
-          paranoid: false,
-        },
-      ],
-    });
-
-    return {
-      results: map(results, (result: any) => ({
-        ranking: result.searchRanking,
-        context: removeMarkdown(unescape(result.searchContext), {
-          stripHTML: false,
-        }),
-        document: find(documents, {
-          id: result.id,
-        }) as Document,
-      })),
-      totalCount: count,
-    };
-  }
-
-  static async searchForUser(
-    user: User,
-    query: string,
-    options: SearchOptions = {}
-  ): Promise<SearchResponse> {
-    const limit = options.limit || 15;
-    const offset = options.offset || 0;
-    const wildcardQuery = `${escape(query)}:*`;
-
-    // Ensure we're filtering by the users accessible collections. If
-    // collectionId is passed as an option it is assumed that the authorization
-    // has already been done in the router
-    let collectionIds;
-
-    if (options.collectionId) {
-      collectionIds = [options.collectionId];
-    } else {
-      collectionIds = await user.collectionIds();
-    }
-
-    // If the user has access to no collections then shortcircuit the rest of this
-    if (!collectionIds.length) {
-      return {
-        results: [],
-        totalCount: 0,
-      };
-    }
-
-    let dateFilter;
-
-    if (options.dateFilter) {
-      dateFilter = `1 ${options.dateFilter}`;
-    }
-
-    // Build the SQL query to get documentIds, ranking, and search term context
-    const whereClause = `
-  "searchVector" @@ to_tsquery('english', :query) AND
-    "teamId" = :teamId AND
-    "collectionId" IN(:collectionIds) AND
-    ${
-      options.dateFilter ? '"updatedAt" > now() - interval :dateFilter AND' : ""
-    }
-    ${
-      options.collaboratorIds
-        ? '"collaboratorIds" @> ARRAY[:collaboratorIds]::uuid[] AND'
-        : ""
-    }
-    ${options.includeArchived ? "" : '"archivedAt" IS NULL AND'}
-    "deletedAt" IS NULL AND
-    ${
-      options.includeDrafts
-        ? '("publishedAt" IS NOT NULL OR "createdById" = :userId)'
-        : '"publishedAt" IS NOT NULL'
-    }
-  `;
-    const selectSql = `
-  SELECT
-    id,
-    ts_rank(documents."searchVector", to_tsquery('english', :query)) as "searchRanking",
-    ts_headline('english', "text", to_tsquery('english', :query), 'MaxFragments=1, MinWords=20, MaxWords=30') as "searchContext"
-  FROM documents
-  WHERE ${whereClause}
-  ORDER BY
-    "searchRanking" DESC,
-    "updatedAt" DESC
-  LIMIT :limit
-  OFFSET :offset;
-  `;
-    const countSql = `
-    SELECT COUNT(id)
-    FROM documents
-    WHERE ${whereClause}
-  `;
-    const queryReplacements = {
-      teamId: user.teamId,
-      userId: user.id,
-      collaboratorIds: options.collaboratorIds,
-      query: wildcardQuery,
-      collectionIds,
-      dateFilter,
-    };
-    const resultsQuery = this.sequelize!.query(selectSql, {
-      type: QueryTypes.SELECT,
-      replacements: { ...queryReplacements, limit, offset },
-    });
-    const countQuery = this.sequelize!.query(countSql, {
-      type: QueryTypes.SELECT,
-      replacements: queryReplacements,
-    });
-    const [results, [{ count }]]: [any, any] = await Promise.all([
-      resultsQuery,
-      countQuery,
-    ]);
-
-    // Final query to get associated document data
-    const documents = await this.scope([
-      {
-        method: ["withViews", user.id],
-      },
-      {
-        method: ["withCollection", user.id],
-      },
-    ]).findAll({
-      where: {
-        id: map(results, "id"),
-      },
-      include: [
-        {
-          model: User,
-          as: "createdBy",
-          paranoid: false,
-        },
-        {
-          model: User,
-          as: "updatedBy",
-          paranoid: false,
-        },
-      ],
-    });
-    return {
-      results: map(results, (result: any) => ({
-        ranking: result.searchRanking,
-        context: removeMarkdown(unescape(result.searchContext), {
-          stripHTML: false,
-        }),
-        document: find(documents, {
-          id: result.id,
-        }) as Document,
-      })),
-      totalCount: count,
-    };
+    return null;
   }
 
   // instance methods
 
-  toMarkdown = () => {
-    const text = unescape(this.text);
+  get titleWithDefault(): string {
+    return this.title || "Untitled";
+  }
 
-    if (this.version) {
-      return `# ${this.title}\n\n${text}`;
-    }
+  /**
+   * Get a list of users that have collaborated on this document
+   *
+   * @param options FindOptions
+   * @returns A promise that resolve to a list of users
+   */
+  collaborators = async (options?: FindOptions<User>): Promise<User[]> => {
+    const users = await Promise.all(
+      this.collaboratorIds.map((collaboratorId) =>
+        User.findByPk(collaboratorId, options)
+      )
+    );
 
-    return text;
+    return compact(users);
   };
 
-  migrateVersion = () => {
-    let migrated = false;
-
-    // migrate from document version 0 -> 1
-    if (!this.version) {
-      // removing the title from the document text attribute
-      this.text = this.text.replace(/^#\s(.*)\n/, "");
-      this.version = 1;
-      migrated = true;
-    }
-
-    // migrate from document version 1 -> 2
-    if (this.version === 1) {
-      const nodes = serializer.deserialize(this.text);
-      this.text = serializer.serialize(nodes, {
-        version: 2,
+  /**
+   * Calculate all of the document ids that are children of this document by
+   * iterating through parentDocumentId references in the most efficient way.
+   *
+   * @param where query options to further filter the documents
+   * @param options FindOptions
+   * @returns A promise that resolves to a list of document ids
+   */
+  getChildDocumentIds = async (
+    where?: Omit<WhereOptions<Document>, "parentDocumentId">,
+    options?: FindOptions<Document>
+  ): Promise<string[]> => {
+    const getChildDocumentIds = async (
+      ...parentDocumentId: string[]
+    ): Promise<string[]> => {
+      const childDocuments = await (this
+        .constructor as typeof Document).findAll({
+        attributes: ["id"],
+        where: {
+          parentDocumentId,
+          ...where,
+        },
+        ...options,
       });
-      this.version = 2;
-      migrated = true;
-    }
 
-    if (migrated) {
-      return this.save({
-        silent: true,
-        hooks: false,
-      });
-    }
+      const childDocumentIds = childDocuments.map((doc) => doc.id);
 
-    return undefined;
+      if (childDocumentIds.length > 0) {
+        return [
+          ...childDocumentIds,
+          ...(await getChildDocumentIds(...childDocumentIds)),
+        ];
+      }
+
+      return childDocumentIds;
+    };
+
+    return getChildDocumentIds(this.id);
   };
 
   archiveWithChildren = async (
@@ -703,47 +555,71 @@ class Document extends ParanoidModel {
     return this.save(options);
   };
 
-  publish = async (userId: string, options?: FindOptions<Document>) => {
+  publish = async (userId: string, { transaction }: SaveOptions<Document>) => {
+    // If the document is already published then calling publish should act like
+    // a regular save
     if (this.publishedAt) {
-      return this.save(options);
+      return this.save({ transaction });
     }
 
     if (!this.template) {
-      const collection = await Collection.findByPk(this.collectionId);
-      await collection?.addDocumentToStructure(this, 0);
+      const collection = await Collection.findByPk(this.collectionId, {
+        transaction,
+        lock: Transaction.LOCK.UPDATE,
+      });
+
+      if (collection) {
+        await collection.addDocumentToStructure(this, 0, { transaction });
+        this.collection = collection;
+      }
     }
 
     this.lastModifiedById = userId;
     this.publishedAt = new Date();
-    await this.save(options);
-    return this;
+    return this.save({ transaction });
   };
 
-  unpublish = async (userId: string, options?: FindOptions<Document>) => {
+  unpublish = async (userId: string) => {
+    // If the document is already a draft then calling unpublish should act like
+    // a regular save
     if (!this.publishedAt) {
-      return this;
+      return this.save();
     }
-    const collection = await this.$get("collection");
-    await collection?.removeDocumentInStructure(this);
 
-    // unpublishing a document converts the "ownership" to yourself, so that it
-    // can appear in your drafts rather than the original creators
+    await this.sequelize.transaction(async (transaction: Transaction) => {
+      const collection = await Collection.findByPk(this.collectionId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+
+      if (collection) {
+        await collection.removeDocumentInStructure(this, { transaction });
+        this.collection = collection;
+      }
+    });
+
+    // unpublishing a document converts the ownership to yourself, so that it
+    // will appear in your drafts rather than the original creators
     this.createdById = userId;
     this.lastModifiedById = userId;
     this.publishedAt = null;
-    await this.save(options);
-    return this;
+    return this.save();
   };
 
   // Moves a document from being visible to the team within a collection
   // to the archived area, where it can be subsequently restored.
   archive = async (userId: string) => {
-    // archive any children and remove from the document structure
-    const collection = await this.$get("collection");
-    if (collection) {
-      await collection.removeDocumentInStructure(this);
-      this.collection = collection;
-    }
+    await this.sequelize.transaction(async (transaction: Transaction) => {
+      const collection = await Collection.findByPk(this.collectionId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+
+      if (collection) {
+        await collection.removeDocumentInStructure(this, { transaction });
+        this.collection = collection;
+      }
+    });
 
     await this.archiveWithChildren(userId);
     return this;
@@ -751,28 +627,35 @@ class Document extends ParanoidModel {
 
   // Restore an archived document back to being visible to the team
   unarchive = async (userId: string) => {
-    const collection = await this.$get("collection");
-
-    // check to see if the documents parent hasn't been archived also
-    // If it has then restore the document to the collection root.
-    if (this.parentDocumentId) {
-      const parent = await (this.constructor as typeof Document).findOne({
-        where: {
-          id: this.parentDocumentId,
-          archivedAt: {
-            [Op.is]: null,
-          },
-        },
+    await this.sequelize.transaction(async (transaction: Transaction) => {
+      const collection = await Collection.findByPk(this.collectionId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
       });
-      if (!parent) {
-        this.parentDocumentId = null;
-      }
-    }
 
-    if (!this.template && collection) {
-      await collection.addDocumentToStructure(this);
-      this.collection = collection;
-    }
+      // check to see if the documents parent hasn't been archived also
+      // If it has then restore the document to the collection root.
+      if (this.parentDocumentId) {
+        const parent = await (this.constructor as typeof Document).findOne({
+          where: {
+            id: this.parentDocumentId,
+            archivedAt: {
+              [Op.is]: null,
+            },
+          },
+        });
+        if (!parent) {
+          this.parentDocumentId = null;
+        }
+      }
+
+      if (!this.template && collection) {
+        await collection.addDocumentToStructure(this, undefined, {
+          transaction,
+        });
+        this.collection = collection;
+      }
+    });
 
     if (this.deletedAt) {
       await this.restore();
@@ -786,39 +669,36 @@ class Document extends ParanoidModel {
 
   // Delete a document, archived or otherwise.
   delete = (userId: string) => {
-    return this.sequelize.transaction(
-      async (transaction: Transaction): Promise<Document> => {
-        if (!this.archivedAt && !this.template) {
-          // delete any children and remove from the document structure
-          const collection = await this.$get("collection", {
-            transaction,
-          });
-          if (collection) {
-            await collection.deleteDocument(this);
-          }
-        } else {
-          await this.destroy({
-            transaction,
-          });
-        }
-
-        await Revision.destroy({
-          where: {
-            documentId: this.id,
-          },
+    return this.sequelize.transaction(async (transaction: Transaction) => {
+      if (!this.archivedAt && !this.template && this.collectionId) {
+        // delete any children and remove from the document structure
+        const collection = await Collection.findByPk(this.collectionId, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        await collection?.deleteDocument(this, { transaction });
+      } else {
+        await this.destroy({
           transaction,
         });
-        await this.update(
-          {
-            lastModifiedById: userId,
-          },
-          {
-            transaction,
-          }
-        );
-        return this;
       }
-    );
+
+      await Revision.destroy({
+        where: {
+          documentId: this.id,
+        },
+        transaction,
+      });
+      await this.update(
+        {
+          lastModifiedById: userId,
+        },
+        {
+          transaction,
+        }
+      );
+      return this;
+    });
   };
 
   getTimestamp = () => {
@@ -826,10 +706,8 @@ class Document extends ParanoidModel {
   };
 
   getSummary = () => {
-    const plain = removeMarkdown(unescape(this.text), {
-      stripHTML: false,
-    });
-    const lines = compact(plain.split("\n"));
+    const plainText = DocumentHelper.toPlainText(this);
+    const lines = compact(plainText.split("\n"));
     const notEmpty = lines.length >= 1;
 
     if (this.version) {
@@ -839,22 +717,43 @@ class Document extends ParanoidModel {
     return notEmpty ? lines[1] : "";
   };
 
-  toJSON = () => {
-    // Warning: only use for new documents as order of children is
-    // handled in the collection's documentStructure
+  /**
+   * Returns a JSON representation of the document suitable for use in the
+   * collection documentStructure.
+   *
+   * @param options Optional transaction to use for the query
+   * @returns Promise resolving to a NavigationNode
+   */
+  toNavigationNode = async (options?: {
+    transaction?: Transaction | null | undefined;
+  }): Promise<NavigationNode> => {
+    const childDocuments = await (this.constructor as typeof Document)
+      .unscoped()
+      .findAll({
+        where: {
+          teamId: this.teamId,
+          parentDocumentId: this.id,
+          archivedAt: {
+            [Op.is]: null,
+          },
+          publishedAt: {
+            [Op.ne]: null,
+          },
+        },
+        transaction: options?.transaction,
+      });
+
+    const children = await Promise.all(
+      childDocuments.map((child) => child.toNavigationNode(options))
+    );
+
     return {
       id: this.id,
       title: this.title,
       url: this.url,
-      children: [],
+      children,
     };
   };
-}
-
-function escape(query: string): string {
-  // replace "\" with escaped "\\" because sequelize.escape doesn't do it
-  // https://github.com/sequelize/sequelize/issues/2950
-  return Document.sequelize!.escape(query).replace(/\\/g, "\\\\");
 }
 
 export default Document;

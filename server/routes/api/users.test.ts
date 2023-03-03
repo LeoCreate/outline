@@ -1,12 +1,14 @@
-import TestServer from "fetch-test-server";
-import webService from "@server/services/web";
 import { buildTeam, buildAdmin, buildUser } from "@server/test/factories";
-import { flushdb, seed } from "@server/test/support";
+import { seed, getTestServer } from "@server/test/support";
 
-const app = webService();
-const server = new TestServer(app.callback());
-beforeEach(() => flushdb());
-afterAll(() => server.close());
+const server = getTestServer();
+
+beforeAll(() => {
+  jest.useFakeTimers().setSystemTime(new Date("2018-01-02T00:00:00.000Z"));
+});
+afterAll(() => {
+  jest.useRealTimers();
+});
 
 describe("#users.list", () => {
   it("should allow filtering by user name", async () => {
@@ -32,9 +34,26 @@ describe("#users.list", () => {
   });
 
   it("should allow filtering to suspended users", async () => {
-    const user = await buildUser({
+    const admin = await buildAdmin();
+    await buildUser({
       name: "Tester",
+      teamId: admin.teamId,
+      suspendedAt: new Date(),
     });
+    const res = await server.post("/api/users.list", {
+      body: {
+        query: "test",
+        filter: "suspended",
+        token: admin.getJwtToken(),
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(1);
+  });
+
+  it("should not allow members to view suspended users", async () => {
+    const user = await buildUser();
     await buildUser({
       name: "Tester",
       teamId: user.teamId,
@@ -43,13 +62,12 @@ describe("#users.list", () => {
     const res = await server.post("/api/users.list", {
       body: {
         query: "test",
-        filter: "suspended",
         token: user.getJwtToken(),
       },
     });
     const body = await res.json();
     expect(res.status).toEqual(200);
-    expect(body.data.length).toEqual(1);
+    expect(body.data.length).toEqual(0);
   });
 
   it("should allow filtering to invited", async () => {
@@ -85,6 +103,20 @@ describe("#users.list", () => {
     expect(body.data.length).toEqual(2);
     expect(body.data[0].id).toEqual(user.id);
     expect(body.data[1].id).toEqual(admin.id);
+  });
+
+  it("should allow filtering by id", async () => {
+    const { admin, user } = await seed();
+    const res = await server.post("/api/users.list", {
+      body: {
+        token: admin.getJwtToken(),
+        ids: [user.id],
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(200);
+    expect(body.data.length).toEqual(1);
+    expect(body.data[0].id).toEqual(user.id);
   });
 
   it("should require admin for detailed info", async () => {
@@ -278,16 +310,6 @@ describe("#users.invite", () => {
 });
 
 describe("#users.delete", () => {
-  it("should not allow deleting without confirmation", async () => {
-    const user = await buildUser();
-    const res = await server.post("/api/users.delete", {
-      body: {
-        token: user.getJwtToken(),
-      },
-    });
-    expect(res.status).toEqual(400);
-  });
-
   it("should not allow deleting last admin if many users", async () => {
     const user = await buildAdmin();
     await buildUser({
@@ -297,55 +319,52 @@ describe("#users.delete", () => {
     const res = await server.post("/api/users.delete", {
       body: {
         token: user.getJwtToken(),
-        confirmation: true,
       },
     });
     expect(res.status).toEqual(400);
   });
 
-  it("should allow deleting user account with confirmation", async () => {
+  it("should require correct code when no id passed", async () => {
+    const user = await buildAdmin();
+    await buildUser({
+      teamId: user.teamId,
+      isAdmin: false,
+    });
+    const res = await server.post("/api/users.delete", {
+      body: {
+        code: "123",
+        token: user.getJwtToken(),
+      },
+    });
+    expect(res.status).toEqual(400);
+  });
+
+  it("should allow deleting user account with correct code", async () => {
     const user = await buildUser();
     await buildUser({
       teamId: user.teamId,
     });
     const res = await server.post("/api/users.delete", {
       body: {
+        code: user.deleteConfirmationCode,
         token: user.getJwtToken(),
-        confirmation: true,
       },
     });
     expect(res.status).toEqual(200);
   });
 
-  it("should allow deleting pending user account with admin", async () => {
-    const user = await buildAdmin();
-    const pending = await buildUser({
-      teamId: user.teamId,
-      lastActiveAt: null,
+  it("should allow deleting user account as admin", async () => {
+    const admin = await buildAdmin();
+    const user = await buildUser({
+      teamId: admin.teamId,
     });
     const res = await server.post("/api/users.delete", {
       body: {
-        token: user.getJwtToken(),
-        id: pending.id,
-        confirmation: true,
+        id: user.id,
+        token: admin.getJwtToken(),
       },
     });
     expect(res.status).toEqual(200);
-  });
-
-  it("should not allow deleting another user account", async () => {
-    const user = await buildAdmin();
-    const user2 = await buildUser({
-      teamId: user.teamId,
-    });
-    const res = await server.post("/api/users.delete", {
-      body: {
-        token: user.getJwtToken(),
-        id: user2.id,
-        confirmation: true,
-      },
-    });
-    expect(res.status).toEqual(403);
   });
 
   it("should require authentication", async () => {
@@ -368,6 +387,46 @@ describe("#users.update", () => {
     const body = await res.json();
     expect(res.status).toEqual(200);
     expect(body.data.name).toEqual("New name");
+  });
+
+  it("should fail upon sending invalid user preference", async () => {
+    const { user } = await seed();
+    const res = await server.post("/api/users.update", {
+      body: {
+        token: user.getJwtToken(),
+        name: "New name",
+        preferences: { invalidPreference: "invalidValue" },
+      },
+    });
+    expect(res.status).toEqual(400);
+  });
+
+  it("should fail upon sending invalid user preference value", async () => {
+    const { user } = await seed();
+    const res = await server.post("/api/users.update", {
+      body: {
+        token: user.getJwtToken(),
+        name: "New name",
+        preferences: { rememberLastPath: "invalidValue" },
+      },
+    });
+    expect(res.status).toEqual(400);
+  });
+
+  it("should update rememberLastPath user preference", async () => {
+    const { user } = await seed();
+    const res = await server.post("/api/users.update", {
+      body: {
+        token: user.getJwtToken(),
+        name: "New name",
+        preferences: {
+          rememberLastPath: true,
+        },
+      },
+    });
+    const body = await res.json();
+    expect(res.status).toEqual(200);
+    expect(body.data.preferences.rememberLastPath).toBe(true);
   });
 
   it("should require authentication", async () => {
@@ -460,7 +519,7 @@ describe("#users.demote", () => {
     expect(body).toMatchSnapshot();
   });
 
-  it("should not demote admins if only one available", async () => {
+  it("should not allow demoting self", async () => {
     const admin = await buildAdmin();
     const res = await server.post("/api/users.demote", {
       body: {

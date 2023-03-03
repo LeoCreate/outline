@@ -9,11 +9,15 @@ import { MenuInternalLink } from "~/types";
 type Props = {
   items: MenuInternalLink[];
   max?: number;
-  children?: React.ReactNode;
   highlightFirstItem?: boolean;
 };
 
-function Breadcrumb({ items, highlightFirstItem, children, max = 2 }: Props) {
+function Breadcrumb({
+  items,
+  highlightFirstItem,
+  children,
+  max = 2,
+}: React.PropsWithChildren<Props>) {
   const totalItems = items.length;
   const topLevelItems: MenuInternalLink[] = [...items];
   let overflowItems;
@@ -33,7 +37,7 @@ function Breadcrumb({ items, highlightFirstItem, children, max = 2 }: Props) {
   return (
     <Flex justify="flex-start" align="center">
       {topLevelItems.map((item, index) => (
-        <React.Fragment key={item.to || index}>
+        <React.Fragment key={String(item.to) || index}>
           {item.icon}
           {item.to ? (
             <Item
@@ -63,6 +67,7 @@ const Item = styled(Link)<{ $highlight: boolean; $withIcon: boolean }>`
   display: flex;
   flex-shrink: 1;
   min-width: 0;
+  cursor: var(--pointer);
   color: ${(props) => props.theme.text};
   font-size: 15px;
   height: 24px;

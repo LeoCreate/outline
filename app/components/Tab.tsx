@@ -1,23 +1,20 @@
 import { m } from "framer-motion";
 import * as React from "react";
 import styled, { useTheme } from "styled-components";
-import NavLinkWithChildrenFunc from "~/components/NavLink";
+import NavLink from "~/components/NavLink";
 
-type Props = Omit<
-  React.ComponentProps<typeof NavLinkWithChildrenFunc>,
-  "children"
-> & {
+type Props = Omit<React.ComponentProps<typeof NavLink>, "children"> & {
   to: string;
   exact?: boolean;
-  children: React.ReactNode;
 };
 
-const TabLink = styled(NavLinkWithChildrenFunc)`
+const TabLink = styled(NavLink)`
   position: relative;
   display: inline-flex;
   align-items: center;
   font-weight: 500;
   font-size: 14px;
+  cursor: var(--pointer);
   color: ${(props) => props.theme.textTertiary};
   margin-right: 24px;
   padding: 6px 0;
@@ -34,8 +31,7 @@ const Active = styled(m.div)`
   right: 0;
   height: 3px;
   width: 100%;
-  border-top-left-radius: 2px;
-  border-top-right-radius: 2px;
+  border-radius: 3px;
   background: ${(props) => props.theme.textSecondary};
 `;
 
@@ -45,7 +41,7 @@ const transition = {
   damping: 30,
 };
 
-export default function Tab({ children, ...rest }: Props) {
+const Tab: React.FC<Props> = ({ children, ...rest }) => {
   const theme = useTheme();
   const activeStyle = {
     color: theme.textSecondary,
@@ -67,4 +63,6 @@ export default function Tab({ children, ...rest }: Props) {
       )}
     </TabLink>
   );
-}
+};
+
+export default Tab;

@@ -1,28 +1,41 @@
 import Queue from "bull";
-import Redis from "ioredis";
 import { snakeCase } from "lodash";
-import Metrics from "@server/logging/metrics";
-import { client, subscriber } from "../redis";
+import env from "@server/env";
+import Metrics from "@server/logging/Metrics";
+import Redis from "../redis";
+import ShutdownHelper, { ShutdownOrder } from "./ShutdownHelper";
 
-export function createQueue(name: string) {
+export function createQueue(
+  name: string,
+  defaultJobOptions?: Partial<Queue.JobOptions>
+) {
   const prefix = `queue.${snakeCase(name)}`;
+
+  // Notes on reusing Redis connections for Bull:
+  // https://github.com/OptimalBits/bull/blob/b6d530f72a774be0fd4936ddb4ad9df3b183f4b6/PATTERNS.md#reusing-redis-connections
   const queue = new Queue(name, {
     createClient(type) {
       switch (type) {
         case "client":
-          return client;
+          return Redis.defaultClient;
 
         case "subscriber":
-          return subscriber;
+          return Redis.defaultSubscriber;
+
+        case "bclient":
+          return new Redis(env.REDIS_URL, {
+            maxRetriesPerRequest: null,
+            connectionNameSuffix: "bull",
+          });
 
         default:
-          return new Redis(process.env.REDIS_URL);
+          throw new Error(`Unexpected connection type: ${type}`);
       }
     },
-
     defaultJobOptions: {
       removeOnComplete: true,
       removeOnFail: true,
+      ...defaultJobOptions,
     },
   });
   queue.on("stalled", () => {
@@ -37,9 +50,17 @@ export function createQueue(name: string) {
   queue.on("failed", () => {
     Metrics.increment(`${prefix}.jobs.failed`);
   });
-  setInterval(async () => {
-    Metrics.gauge(`${prefix}.count`, await queue.count());
-    Metrics.gauge(`${prefix}.delayed_count`, await queue.getDelayedCount());
-  }, 5 * 1000);
+
+  if (env.ENVIRONMENT !== "test") {
+    setInterval(async () => {
+      Metrics.gauge(`${prefix}.count`, await queue.count());
+      Metrics.gauge(`${prefix}.delayed_count`, await queue.getDelayedCount());
+    }, 5 * 1000);
+  }
+
+  ShutdownHelper.add(name, ShutdownOrder.normal, async () => {
+    await queue.close();
+  });
+
   return queue;
 }

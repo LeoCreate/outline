@@ -7,16 +7,28 @@ import {
   ForeignKey,
   Table,
   DataType,
+  Scopes,
 } from "sequelize-typescript";
 import { USER_PRESENCE_INTERVAL } from "@shared/constants";
 import Document from "./Document";
 import User from "./User";
-import BaseModel from "./base/BaseModel";
+import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
 
+@Scopes(() => ({
+  withUser: () => ({
+    include: [
+      {
+        model: User,
+        required: true,
+        as: "user",
+      },
+    ],
+  }),
+}))
 @Table({ tableName: "views", modelName: "view" })
 @Fix
-class View extends BaseModel {
+class View extends IdModel {
   @Column
   lastEditingAt: Date | null;
 
@@ -57,7 +69,10 @@ class View extends BaseModel {
     return model;
   }
 
-  static async findByDocument(documentId: string) {
+  static async findByDocument(
+    documentId: string,
+    { includeSuspended }: { includeSuspended?: boolean }
+  ) {
     return this.findAll({
       where: {
         documentId,
@@ -67,6 +82,10 @@ class View extends BaseModel {
         {
           model: User,
           paranoid: false,
+          required: true,
+          ...(includeSuspended
+            ? {}
+            : { where: { suspendedAt: { [Op.is]: null } } }),
         },
       ],
     });

@@ -8,6 +8,7 @@ import {
   Route,
   useHistory,
   useRouteMatch,
+  useLocation,
 } from "react-router-dom";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
@@ -16,33 +17,40 @@ import Search from "~/scenes/Search";
 import Badge from "~/components/Badge";
 import CenteredContent from "~/components/CenteredContent";
 import CollectionDescription from "~/components/CollectionDescription";
-import CollectionIcon from "~/components/CollectionIcon";
 import Heading from "~/components/Heading";
+import CollectionIcon from "~/components/Icons/CollectionIcon";
+import InputSearchPage from "~/components/InputSearchPage";
 import PlaceholderList from "~/components/List/Placeholder";
 import PaginatedDocumentList from "~/components/PaginatedDocumentList";
 import PinnedDocuments from "~/components/PinnedDocuments";
 import PlaceholderText from "~/components/PlaceholderText";
 import Scene from "~/components/Scene";
+import Star, { AnimatedStar } from "~/components/Star";
 import Tab from "~/components/Tab";
 import Tabs from "~/components/Tabs";
 import Tooltip from "~/components/Tooltip";
 import { editCollection } from "~/actions/definitions/collections";
 import useCommandBarActions from "~/hooks/useCommandBarActions";
+import useLastVisitedPath from "~/hooks/useLastVisitedPath";
 import usePolicy from "~/hooks/usePolicy";
 import useStores from "~/hooks/useStores";
 import { collectionUrl, updateCollectionUrl } from "~/utils/routeHelpers";
 import Actions from "./Collection/Actions";
 import DropToImport from "./Collection/DropToImport";
 import Empty from "./Collection/Empty";
+import MembershipPreview from "./Collection/MembershipPreview";
 
 function CollectionScene() {
   const params = useParams<{ id?: string }>();
   const history = useHistory();
   const match = useRouteMatch();
+  const location = useLocation();
   const { t } = useTranslation();
   const { documents, pins, collections, ui } = useStores();
   const [isFetching, setFetching] = React.useState(false);
   const [error, setError] = React.useState<Error | undefined>();
+  const currentPath = location.pathname;
+  const [, setLastVisitedPath] = useLastVisitedPath();
 
   const id = params.id || "";
   const collection: Collection | null | undefined =
@@ -50,19 +58,25 @@ function CollectionScene() {
   const can = usePolicy(collection?.id || "");
 
   React.useEffect(() => {
+    setLastVisitedPath(currentPath);
+  }, [currentPath, setLastVisitedPath]);
+
+  React.useEffect(() => {
     if (collection?.name) {
       const canonicalUrl = updateCollectionUrl(match.url, collection);
 
       if (match.url !== canonicalUrl) {
-        history.replace(canonicalUrl);
+        history.replace(canonicalUrl, history.location.state);
       }
     }
   }, [collection, collection?.name, history, id, match.url]);
 
   React.useEffect(() => {
     if (collection) {
-      ui.setActiveCollection(collection);
+      ui.setActiveCollection(collection.id);
     }
+
+    return () => ui.setActiveCollection(undefined);
   }, [ui, collection]);
 
   React.useEffect(() => {
@@ -109,13 +123,28 @@ function CollectionScene() {
       key={collection.id}
       centered={false}
       textTitle={collection.name}
+      left={
+        collection.isEmpty ? undefined : (
+          <InputSearchPage
+            source="collection"
+            placeholder={`${t("Search in collection")}…`}
+            label={t("Search in collection")}
+            collectionId={collection.id}
+          />
+        )
+      }
       title={
         <>
           <CollectionIcon collection={collection} expanded />
           &nbsp;{collection.name}
         </>
       }
-      actions={<Actions collection={collection} />}
+      actions={
+        <>
+          <MembershipPreview collection={collection} />
+          <Actions collection={collection} />
+        </>
+      }
     >
       <DropToImport
         accept={documents.importFileTypes.join(", ")}
@@ -127,7 +156,7 @@ function CollectionScene() {
             <Empty collection={collection} />
           ) : (
             <>
-              <HeadingWithIcon>
+              <HeadingWithIcon $isStarred={collection.isStarred}>
                 <HeadingIcon collection={collection} size={40} expanded />
                 {collection.name}
                 {!collection.permission && (
@@ -140,6 +169,7 @@ function CollectionScene() {
                     <Badge>{t("Private")}</Badge>
                   </Tooltip>
                 )}
+                <StarButton collection={collection} size={32} />
               </HeadingWithIcon>
               <CollectionDescription collection={collection} />
 
@@ -226,7 +256,7 @@ function CollectionScene() {
                       collectionId: collection.id,
                       parentDocumentId: null,
                       sort: collection.sort.field,
-                      direction: "ASC",
+                      direction: collection.sort.direction,
                     }}
                     showParentDocuments
                   />
@@ -247,9 +277,36 @@ function CollectionScene() {
   );
 }
 
-const HeadingWithIcon = styled(Heading)`
+const StarButton = styled(Star)`
+  position: relative;
+  top: 0;
+  left: 10px;
+  overflow: hidden;
+  width: 24px;
+
+  svg {
+    position: relative;
+    left: -4px;
+  }
+`;
+
+const HeadingWithIcon = styled(Heading)<{ $isStarred: boolean }>`
   display: flex;
   align-items: center;
+
+  ${AnimatedStar} {
+    opacity: ${(props) => (props.$isStarred ? "1 !important" : 0)};
+  }
+
+  &:hover {
+    ${AnimatedStar} {
+      opacity: 0.5;
+
+      &:hover {
+        opacity: 1;
+      }
+    }
+  }
 
   ${breakpoint("tablet")`
     margin-left: -40px;

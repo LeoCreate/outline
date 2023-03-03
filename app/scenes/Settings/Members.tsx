@@ -4,7 +4,6 @@ import { PlusIcon, UserIcon } from "outline-icons";
 import * as React from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useHistory, useLocation } from "react-router-dom";
-import scrollIntoView from "smooth-scroll-into-view-if-needed";
 import styled from "styled-components";
 import { PAGINATION_SYMBOL } from "~/stores/BaseStore";
 import User from "~/models/User";
@@ -17,6 +16,7 @@ import InputSearch from "~/components/InputSearch";
 import Modal from "~/components/Modal";
 import Scene from "~/components/Scene";
 import Text from "~/components/Text";
+import env from "~/env";
 import useBoolean from "~/hooks/useBoolean";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import usePolicy from "~/hooks/usePolicy";
@@ -26,7 +26,6 @@ import PeopleTable from "./components/PeopleTable";
 import UserStatusFilter from "./components/UserStatusFilter";
 
 function Members() {
-  const topRef = React.useRef();
   const location = useLocation();
   const history = useHistory();
   const [
@@ -42,13 +41,13 @@ function Members() {
   const [data, setData] = React.useState<User[]>([]);
   const [totalPages, setTotalPages] = React.useState(0);
   const [userIds, setUserIds] = React.useState<string[]>([]);
-  const can = usePolicy(team.id);
+  const can = usePolicy(team);
   const query = params.get("query") || "";
   const filter = params.get("filter") || "";
   const sort = params.get("sort") || "name";
-  const direction =
-    params.get("direction")?.toUpperCase() === "ASC" ? "ASC" : "DESC";
-
+  const direction = (params.get("direction") || "asc").toUpperCase() as
+    | "ASC"
+    | "DESC";
   const page = parseInt(params.get("page") || "0", 10);
   const limit = 25;
 
@@ -73,7 +72,7 @@ function Members() {
     };
 
     fetchData();
-  }, [query, sort, filter, page, direction, users]);
+  }, [query, sort, filter, page, direction, users, users.counts.all]);
 
   React.useEffect(() => {
     let filtered = users.orderedData;
@@ -84,6 +83,8 @@ function Members() {
       filtered = users.orderedData.filter((u) => userIds.includes(u.id));
     } else if (filter === "admins") {
       filtered = users.admins.filter((u) => userIds.includes(u.id));
+    } else if (filter === "members") {
+      filtered = users.members.filter((u) => userIds.includes(u.id));
     } else if (filter === "suspended") {
       filtered = users.suspended.filter((u) => userIds.includes(u.id));
     } else if (filter === "invited") {
@@ -98,6 +99,7 @@ function Members() {
     filter,
     users.active,
     users.admins,
+    users.members,
     users.orderedData,
     users.suspended,
     users.invited,
@@ -141,51 +143,7 @@ function Members() {
     [params, history, location.pathname]
   );
 
-  const handleChangeSort = React.useCallback(
-    (sort, direction) => {
-      if (sort) {
-        params.set("sort", sort);
-      } else {
-        params.delete("sort");
-      }
-
-      if (direction === "DESC") {
-        params.set("direction", direction.toLowerCase());
-      } else {
-        params.delete("direction");
-      }
-
-      history.replace({
-        pathname: location.pathname,
-        search: params.toString(),
-      });
-    },
-    [params, history, location.pathname]
-  );
-
-  const handleChangePage = React.useCallback(
-    (page) => {
-      if (page) {
-        params.set("page", page.toString());
-      } else {
-        params.delete("page");
-      }
-
-      history.replace({
-        pathname: location.pathname,
-        search: params.toString(),
-      });
-
-      if (topRef.current) {
-        scrollIntoView(topRef.current, {
-          scrollMode: "if-needed",
-          behavior: "auto",
-          block: "start",
-        });
-      }
-    },
-    [params, history, location.pathname]
-  );
+  const appName = env.APP_NAME;
 
   return (
     <Scene
@@ -213,9 +171,9 @@ function Members() {
       <Heading>{t("Members")}</Heading>
       <Text type="secondary">
         <Trans>
-          Everyone that has signed into Outline appears here. It’s possible that
-          there are other users who have access through {team.signinMethods} but
-          haven’t signed in yet.
+          Everyone that has signed into {{ appName }} is listed here. It’s
+          possible that there are other users who have access through{" "}
+          {team.signinMethods} but haven’t signed in yet.
         </Trans>
       </Text>
       <Flex gap={8}>
@@ -228,13 +186,11 @@ function Members() {
         <LargeUserStatusFilter activeKey={filter} onSelect={handleFilter} />
       </Flex>
       <PeopleTable
-        topRef={topRef}
         data={data}
         canManage={can.manage}
         isLoading={isLoading}
-        onChangeSort={handleChangeSort}
-        onChangePage={handleChangePage}
         page={page}
+        pageSize={limit}
         totalPages={totalPages}
         defaultSortDirection="ASC"
       />

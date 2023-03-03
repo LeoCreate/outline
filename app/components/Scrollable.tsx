@@ -2,17 +2,19 @@ import { observer } from "mobx-react";
 import * as React from "react";
 import styled from "styled-components";
 import useWindowSize from "~/hooks/useWindowSize";
+import { hideScrollbars } from "~/styles";
 
-type Props = {
+type Props = React.HTMLAttributes<HTMLDivElement> & {
   shadow?: boolean;
   topShadow?: boolean;
   bottomShadow?: boolean;
+  hiddenScrollbars?: boolean;
   flex?: boolean;
   children: React.ReactNode;
 };
 
 function Scrollable(
-  { shadow, topShadow, bottomShadow, flex, ...rest }: Props,
+  { shadow, topShadow, bottomShadow, hiddenScrollbars, flex, ...rest }: Props,
   ref: React.RefObject<HTMLDivElement>
 ) {
   const fallbackRef = React.useRef<HTMLDivElement>();
@@ -49,11 +51,13 @@ function Scrollable(
   React.useEffect(() => {
     updateShadows();
   }, [height, updateShadows]);
+
   return (
     <Wrapper
       ref={ref || fallbackRef}
       onScroll={updateShadows}
       $flex={flex}
+      $hiddenScrollbars={hiddenScrollbars}
       $topShadowVisible={topShadowVisible}
       $bottomShadowVisible={bottomShadowVisible}
       {...rest}
@@ -65,6 +69,7 @@ const Wrapper = styled.div<{
   $flex?: boolean;
   $topShadowVisible?: boolean;
   $bottomShadowVisible?: boolean;
+  $hiddenScrollbars?: boolean;
 }>`
   display: ${(props) => (props.$flex ? "flex" : "block")};
   flex-direction: column;
@@ -88,7 +93,9 @@ const Wrapper = styled.div<{
 
     return "none";
   }};
-  transition: all 100ms ease-in-out;
+  transition: box-shadow 100ms ease-in-out;
+
+  ${(props) => props.$hiddenScrollbars && hideScrollbars()}
 `;
 
 export default observer(React.forwardRef(Scrollable));

@@ -1,9 +1,12 @@
+import invariant from "invariant";
 import { observer } from "mobx-react";
 import { PlusIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation, Trans } from "react-i18next";
 import styled from "styled-components";
-import Collection from "~/models/Collection";
+import { CollectionPermission } from "@shared/types";
+import Group from "~/models/Group";
+import User from "~/models/User";
 import Button from "~/components/Button";
 import Divider from "~/components/Divider";
 import Flex from "~/components/Flex";
@@ -23,13 +26,14 @@ import CollectionGroupMemberListItem from "./components/CollectionGroupMemberLis
 import MemberListItem from "./components/MemberListItem";
 
 type Props = {
-  collection: Collection;
+  collectionId: string;
 };
 
-function CollectionPermissions({ collection }: Props) {
+function CollectionPermissions({ collectionId }: Props) {
   const { t } = useTranslation();
   const user = useCurrentUser();
   const {
+    collections,
     memberships,
     collectionGroupMemberships,
     users,
@@ -37,6 +41,8 @@ function CollectionPermissions({ collection }: Props) {
     auth,
   } = useStores();
   const { showToast } = useToasts();
+  const collection = collections.get(collectionId);
+  invariant(collection, "Collection not found");
 
   const [
     addGroupModalOpen,
@@ -149,7 +155,7 @@ function CollectionPermissions({ collection }: Props) {
   );
 
   const handleChangePermission = React.useCallback(
-    async (permission: string) => {
+    async (permission: CollectionPermission) => {
       try {
         await collection.save({
           permission,
@@ -203,12 +209,11 @@ function CollectionPermissions({ collection }: Props) {
       <InputSelectPermission
         onChange={handleChangePermission}
         value={collection.permission || ""}
-        nude
       />
       <PermissionExplainer size="small">
         {!collection.permission && (
           <Trans
-            defaults="The <em>{{ collectionName }}</em> collection is private. Team members have no access to it by default."
+            defaults="The <em>{{ collectionName }}</em> collection is private. Workspace members have no access to it by default."
             values={{
               collectionName,
             }}
@@ -217,9 +222,9 @@ function CollectionPermissions({ collection }: Props) {
             }}
           />
         )}
-        {collection.permission === "read" && (
+        {collection.permission === CollectionPermission.ReadWrite && (
           <Trans
-            defaults="Team members can view documents in the <em>{{ collectionName }}</em> collection by default."
+            defaults="Workspace members can view and edit documents in the <em>{{ collectionName }}</em> collection by default."
             values={{
               collectionName,
             }}
@@ -228,9 +233,9 @@ function CollectionPermissions({ collection }: Props) {
             }}
           />
         )}
-        {collection.permission === "read_write" && (
+        {collection.permission === CollectionPermission.Read && (
           <Trans
-            defaults="Team members can view and edit documents in the <em>{{ collectionName }}</em> collection by
+            defaults="Workspace members can view documents in the <em>{{ collectionName }}</em> collection by
           default."
             values={{
               collectionName,
@@ -283,16 +288,14 @@ function CollectionPermissions({ collection }: Props) {
       <Divider />
       {isEmpty && (
         <Empty>
-          <Trans>
-            Add specific access for individual groups and team members
-          </Trans>
+          <Trans>Add additional access for individual members and groups</Trans>
         </Empty>
       )}
       <PaginatedList
         items={collectionGroups}
         fetch={collectionGroupMemberships.fetchPage}
         options={fetchOptions}
-        renderItem={(group) => (
+        renderItem={(group: Group) => (
           <CollectionGroupMemberListItem
             key={group.id}
             group={group}
@@ -310,7 +313,7 @@ function CollectionPermissions({ collection }: Props) {
         items={collectionUsers}
         fetch={memberships.fetchPage}
         options={fetchOptions}
-        renderItem={(item) => (
+        renderItem={(item: User) => (
           <MemberListItem
             key={item.id}
             user={item}
@@ -328,10 +331,7 @@ function CollectionPermissions({ collection }: Props) {
         onRequestClose={handleAddGroupModalClose}
         isOpen={addGroupModalOpen}
       >
-        <AddGroupsToCollection
-          collection={collection}
-          onSubmit={handleAddGroupModalClose}
-        />
+        <AddGroupsToCollection collection={collection} />
       </Modal>
       <Modal
         title={t(`Add people to {{ collectionName }}`, {
@@ -340,10 +340,7 @@ function CollectionPermissions({ collection }: Props) {
         onRequestClose={handleAddMemberModalClose}
         isOpen={addMemberModalOpen}
       >
-        <AddPeopleToCollection
-          collection={collection}
-          onSubmit={handleAddMemberModalClose}
-        />
+        <AddPeopleToCollection collection={collection} />
       </Modal>
     </Flex>
   );

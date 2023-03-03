@@ -4,6 +4,7 @@ import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import Document from "~/models/Document";
+import User from "~/models/User";
 import Avatar from "~/components/Avatar";
 import ListItem from "~/components/List/Item";
 import PaginatedList from "~/components/PaginatedList";
@@ -40,11 +41,12 @@ function DocumentViews({ document, isOpen }: Props) {
     <>
       {isOpen && (
         <PaginatedList
+          aria-label={t("Viewers")}
           items={users}
-          renderItem={(item) => {
-            const view = documentViews.find((v) => v.user.id === item.id);
-            const isPresent = presentIds.includes(item.id);
-            const isEditing = editingIds.includes(item.id);
+          renderItem={(model: User) => {
+            const view = documentViews.find((v) => v.user.id === model.id);
+            const isPresent = presentIds.includes(model.id);
+            const isEditing = editingIds.includes(model.id);
             const subtitle = isPresent
               ? isEditing
                 ? t("Currently editing")
@@ -56,10 +58,10 @@ function DocumentViews({ document, isOpen }: Props) {
                 });
             return (
               <ListItem
-                key={item.id}
-                title={item.name}
+                key={model.id}
+                title={model.name}
                 subtitle={subtitle}
-                image={<Avatar key={item.id} src={item.avatarUrl} size={32} />}
+                image={<Avatar key={model.id} model={model} size={32} />}
                 border={false}
                 small
               />

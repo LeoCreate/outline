@@ -1,39 +1,66 @@
+import { Transaction } from "sequelize";
+import {
+  FileOperationFormat,
+  FileOperationType,
+  FileOperationState,
+} from "@shared/types";
+import { traceFunction } from "@server/logging/tracing";
 import { Collection, Event, Team, User, FileOperation } from "@server/models";
 import { getAWSKeyForFileOp } from "@server/utils/s3";
 
-export default async function collectionExporter({
-  collection,
-  team,
-  user,
-  ip,
-}: {
+type Props = {
   collection?: Collection;
   team: Team;
   user: User;
+  format?: FileOperationFormat;
   ip: string;
-}) {
+  transaction: Transaction;
+};
+
+async function collectionExporter({
+  collection,
+  team,
+  user,
+  format = FileOperationFormat.MarkdownZip,
+  ip,
+  transaction,
+}: Props) {
   const collectionId = collection?.id;
   const key = getAWSKeyForFileOp(user.teamId, collection?.name || team.name);
-  const fileOperation = await FileOperation.create({
-    type: "export",
-    state: "creating",
-    key,
-    url: null,
-    size: 0,
-    collectionId,
-    userId: user.id,
-    teamId: user.teamId,
-  });
+  const fileOperation = await FileOperation.create(
+    {
+      type: FileOperationType.Export,
+      state: FileOperationState.Creating,
+      format,
+      key,
+      url: null,
+      size: 0,
+      collectionId,
+      userId: user.id,
+      teamId: user.teamId,
+    },
+    {
+      transaction,
+    }
+  );
 
-  // Event is consumed on worker in queues/processors/exports
-  await Event.create({
-    name: collection ? "collections.export" : "collections.export_all",
-    collectionId,
-    teamId: user.teamId,
-    actorId: user.id,
-    modelId: fileOperation.id,
-    ip,
-  });
+  await Event.create(
+    {
+      name: "fileOperations.create",
+      teamId: user.teamId,
+      actorId: user.id,
+      modelId: fileOperation.id,
+      collectionId,
+      ip,
+      data: {
+        type: FileOperationType.Export,
+        format,
+      },
+    },
+    {
+      transaction,
+    }
+  );
 
   fileOperation.user = user;
 
@@ -43,3 +70,7 @@ export default async function collectionExporter({
 
   return fileOperation;
 }
+
+export default traceFunction({
+  spanName: "collectionExporter",
+})(collectionExporter);

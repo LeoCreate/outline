@@ -9,10 +9,20 @@ export default function Notices() {
 
   return (
     <>
-      {notice === "google-hd" && (
+      {notice === "domain-required" && (
         <NoticeAlert>
-          Sorry, Google sign in cannot be used with a personal email. Please try
-          signing in with your Google Workspace account.
+          Unable to sign-in. Please navigate to your team's custom URL, then try
+          to sign-in again.
+          <hr />
+          If you were invited to a team, you will find a link to it in the
+          invite email.
+        </NoticeAlert>
+      )}
+      {notice === "gmail-account-creation" && (
+        <NoticeAlert>
+          Sorry, a new account cannot be created with a personal Gmail address.
+          <hr />
+          Please use a Google Workspaces account instead.
         </NoticeAlert>
       )}
       {notice === "maximum-teams" && (
@@ -21,13 +31,7 @@ export default function Notices() {
           installation. Try another?
         </NoticeAlert>
       )}
-      {notice === "hd-not-allowed" && (
-        <NoticeAlert>
-          Sorry, your Google apps domain is not allowed. Please try again with
-          an allowed team domain.
-        </NoticeAlert>
-      )}
-      {notice === "malformed_user_info" && (
+      {notice === "malformed-user-info" && (
         <NoticeAlert>
           We could not read the user info supplied by your identity provider.
         </NoticeAlert>
@@ -44,13 +48,22 @@ export default function Notices() {
           try again in a few minutes.
         </NoticeAlert>
       )}
-      {notice === "auth-error" &&
+      {(notice === "auth-error" || notice === "state-mismatch") &&
         (description ? (
           <NoticeAlert>{description}</NoticeAlert>
         ) : (
           <NoticeAlert>
             Authentication failed – we were unable to sign you in at this time.
             Please try again.
+          </NoticeAlert>
+        ))}
+      {notice === "invalid-authentication" &&
+        (description ? (
+          <NoticeAlert>{description}</NoticeAlert>
+        ) : (
+          <NoticeAlert>
+            Authentication failed – you do not have permission to access this
+            team.
           </NoticeAlert>
         ))}
       {notice === "expired-token" && (
@@ -61,14 +74,28 @@ export default function Notices() {
       )}
       {notice === "suspended" && (
         <NoticeAlert>
-          Your Outline account has been suspended. To re-activate your account,
-          please contact a team admin.
+          Your account has been suspended. To re-activate your account, please
+          contact a team admin.
         </NoticeAlert>
       )}
       {notice === "authentication-provider-disabled" && (
         <NoticeAlert>
           Authentication failed – this login method was disabled by a team
           admin.
+        </NoticeAlert>
+      )}
+      {notice === "invite-required" && (
+        <NoticeAlert>
+          The team you are trying to join requires an invite before you can
+          create an account.
+          <hr />
+          Please request an invite from your team admin and try again.
+        </NoticeAlert>
+      )}
+      {notice === "domain-not-allowed" && (
+        <NoticeAlert>
+          Sorry, your domain is not allowed. Please try again with an allowed
+          team domain.
         </NoticeAlert>
       )}
     </>

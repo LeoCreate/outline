@@ -3,16 +3,16 @@ import { ArchiveIcon, GoToIcon, ShapesIcon, TrashIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
+import type { NavigationNode } from "@shared/types";
 import Document from "~/models/Document";
 import Breadcrumb from "~/components/Breadcrumb";
-import CollectionIcon from "~/components/CollectionIcon";
+import CollectionIcon from "~/components/Icons/CollectionIcon";
 import useStores from "~/hooks/useStores";
-import { MenuInternalLink, NavigationNode } from "~/types";
+import { MenuInternalLink } from "~/types";
 import { collectionUrl } from "~/utils/routeHelpers";
 
 type Props = {
   document: Document;
-  children?: React.ReactNode;
   onlyText?: boolean;
 };
 
@@ -49,13 +49,17 @@ function useCategory(document: Document): MenuInternalLink | null {
   return null;
 }
 
-const DocumentBreadcrumb = ({ document, children, onlyText }: Props) => {
+const DocumentBreadcrumb: React.FC<Props> = ({
+  document,
+  children,
+  onlyText,
+}) => {
   const { collections } = useStores();
   const { t } = useTranslation();
   const category = useCategory(document);
   const collection = collections.get(document.collectionId);
 
-  let collectionNode: MenuInternalLink;
+  let collectionNode: MenuInternalLink | undefined;
 
   if (collection) {
     collectionNode = {
@@ -64,7 +68,7 @@ const DocumentBreadcrumb = ({ document, children, onlyText }: Props) => {
       icon: <CollectionIcon collection={collection} expanded />,
       to: collectionUrl(collection.url),
     };
-  } else {
+  } else if (document.collectionId && !collection) {
     collectionNode = {
       type: "route",
       title: t("Deleted Collection"),
@@ -74,8 +78,9 @@ const DocumentBreadcrumb = ({ document, children, onlyText }: Props) => {
   }
 
   const path = React.useMemo(
-    () => collection?.pathToDocument?.(document.id).slice(0, -1) || [],
-    [collection, document]
+    () => collection?.pathToDocument(document.id).slice(0, -1) || [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [collection, document, document.collectionId, document.parentDocumentId]
   );
 
   const items = React.useMemo(() => {
@@ -85,7 +90,9 @@ const DocumentBreadcrumb = ({ document, children, onlyText }: Props) => {
       output.push(category);
     }
 
-    output.push(collectionNode);
+    if (collectionNode) {
+      output.push(collectionNode);
+    }
 
     path.forEach((node: NavigationNode) => {
       output.push({

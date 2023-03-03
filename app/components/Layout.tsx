@@ -1,12 +1,13 @@
 import { observer } from "mobx-react";
 import * as React from "react";
 import { Helmet } from "react-helmet";
-import styled from "styled-components";
+import styled, { DefaultTheme } from "styled-components";
 import breakpoint from "styled-components-breakpoint";
 import Flex from "~/components/Flex";
 import { LoadingIndicatorBar } from "~/components/LoadingIndicator";
 import SkipNavContent from "~/components/SkipNavContent";
 import SkipNavLink from "~/components/SkipNavLink";
+import env from "~/env";
 import useKeyDown from "~/hooks/useKeyDown";
 import { MenuProvider } from "~/hooks/useMenuContext";
 import useStores from "~/hooks/useStores";
@@ -14,14 +15,18 @@ import { isModKey } from "~/utils/keyboard";
 
 type Props = {
   title?: string;
-  children?: React.ReactNode;
   sidebar?: React.ReactNode;
-  rightRail?: React.ReactNode;
+  sidebarRight?: React.ReactNode;
 };
 
-function Layout({ title, children, sidebar, rightRail }: Props) {
+const Layout: React.FC<Props> = ({
+  title,
+  children,
+  sidebar,
+  sidebarRight,
+}) => {
   const { ui } = useStores();
-  const sidebarCollapsed = !sidebar || ui.isEditing || ui.sidebarCollapsed;
+  const sidebarCollapsed = !sidebar || ui.sidebarIsClosed;
 
   useKeyDown(".", (event) => {
     if (isModKey(event)) {
@@ -32,7 +37,7 @@ function Layout({ title, children, sidebar, rightRail }: Props) {
   return (
     <Container column auto>
       <Helmet>
-        <title>{title ? title : "Outline"}</title>
+        <title>{title ? title : env.APP_NAME}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       </Helmet>
 
@@ -61,11 +66,11 @@ function Layout({ title, children, sidebar, rightRail }: Props) {
           {children}
         </Content>
 
-        {rightRail}
+        {sidebarRight}
       </Container>
     </Container>
   );
-}
+};
 
 const Container = styled(Flex)`
   background: ${(props) => props.theme.background};
@@ -75,11 +80,14 @@ const Container = styled(Flex)`
   min-height: 100%;
 `;
 
-const Content = styled(Flex)<{
+type ContentProps = {
   $isResizing?: boolean;
   $sidebarCollapsed?: boolean;
   $hasSidebar?: boolean;
-}>`
+  theme: DefaultTheme;
+};
+
+const Content = styled(Flex)<ContentProps>`
   margin: 0;
   transition: ${(props) =>
     props.$isResizing ? "none" : `margin-left 100ms ease-out`};
@@ -93,7 +101,7 @@ const Content = styled(Flex)<{
   `}
 
   ${breakpoint("tablet")`
-    ${(props: any) =>
+    ${(props: ContentProps) =>
       props.$hasSidebar &&
       props.$sidebarCollapsed &&
       `margin-left: ${props.theme.sidebarCollapsedWidth}px;`}

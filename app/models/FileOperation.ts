@@ -1,9 +1,10 @@
 import { computed } from "mobx";
+import { FileOperationFormat, FileOperationType } from "@shared/types";
 import { bytesToHumanReadable } from "@shared/utils/files";
-import BaseModal from "./BaseModel";
+import BaseModel from "./BaseModel";
 import User from "./User";
 
-class FileOperation extends BaseModal {
+class FileOperation extends BaseModel {
   id: string;
 
   state: string;
@@ -16,7 +17,9 @@ class FileOperation extends BaseModal {
 
   size: number;
 
-  type: "import" | "export";
+  type: FileOperationType;
+
+  format: FileOperationFormat;
 
   user: User;
 

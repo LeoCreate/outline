@@ -1,11 +1,12 @@
+import { LocationDescriptor } from "history";
 import * as React from "react";
 import styled, { useTheme } from "styled-components";
 import Flex from "~/components/Flex";
 import NavLink from "~/components/NavLink";
 
-type Props = {
+export type Props = Omit<React.HTMLAttributes<HTMLAnchorElement>, "title"> & {
   image?: React.ReactNode;
-  to?: string;
+  to?: LocationDescriptor;
   exact?: boolean;
   title: React.ReactNode;
   subtitle?: React.ReactNode;
@@ -51,7 +52,7 @@ const ListItem = (
         $border={border}
         $small={small}
         activeStyle={{
-          background: theme.primary,
+          background: theme.accent,
         }}
         {...rest}
         as={NavLink}
@@ -63,13 +64,17 @@ const ListItem = (
   }
 
   return (
-    <Wrapper $border={border} $small={small} {...rest}>
+    <Wrapper ref={ref} $border={border} $small={small} {...rest}>
       {content(false)}
     </Wrapper>
   );
 };
 
-const Wrapper = styled.div<{ $small?: boolean; $border?: boolean }>`
+const Wrapper = styled.a<{
+  $small?: boolean;
+  $border?: boolean;
+  to?: LocationDescriptor;
+}>`
   display: flex;
   padding: ${(props) => (props.$border === false ? 0 : "8px 0")};
   margin: ${(props) =>
@@ -81,6 +86,8 @@ const Wrapper = styled.div<{ $small?: boolean; $border?: boolean }>`
   &:last-child {
     border-bottom: 0;
   }
+
+  cursor: ${({ to }) => (to ? "var(--pointer)" : "default")};
 `;
 
 const Image = styled(Flex)`
@@ -90,6 +97,7 @@ const Image = styled(Flex)`
   user-select: none;
   flex-shrink: 0;
   align-self: center;
+  color: ${(props) => props.theme.text};
 `;
 
 const Heading = styled.p<{ $small?: boolean }>`

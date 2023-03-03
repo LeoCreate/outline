@@ -4,6 +4,7 @@ import * as React from "react";
 import styled, { css } from "styled-components";
 import { fadeAndScaleIn, pulse } from "~/styles/animations";
 import { Toast as TToast } from "~/types";
+import Spinner from "./Spinner";
 
 type Props = {
   onRequestClose: () => void;
@@ -17,7 +18,12 @@ function Toast({ closeAfterMs = 3000, onRequestClose, toast }: Props) {
   const { action, type = "info", reoccurring } = toast;
 
   React.useEffect(() => {
-    timeout.current = setTimeout(onRequestClose, toast.timeout || closeAfterMs);
+    if (toast.timeout !== 0) {
+      timeout.current = setTimeout(
+        onRequestClose,
+        toast.timeout || closeAfterMs
+      );
+    }
     return () => timeout.current && clearTimeout(timeout.current);
   }, [onRequestClose, toast, closeAfterMs]);
 
@@ -36,7 +42,7 @@ function Toast({ closeAfterMs = 3000, onRequestClose, toast }: Props) {
   }, []);
 
   const handleResume = React.useCallback(() => {
-    if (timeout.current) {
+    if (timeout.current && toast.timeout !== 0) {
       timeout.current = setTimeout(
         onRequestClose,
         toast.timeout || closeAfterMs
@@ -51,6 +57,7 @@ function Toast({ closeAfterMs = 3000, onRequestClose, toast }: Props) {
       onMouseLeave={handleResume}
     >
       <Container onClick={action ? undefined : onRequestClose}>
+        {type === "loading" && <Spinner color="currentColor" />}
         {type === "info" && <InfoIcon color="currentColor" />}
         {type === "success" && <CheckboxIcon checked color="currentColor" />}
         {type === "warning" ||
@@ -64,14 +71,14 @@ function Toast({ closeAfterMs = 3000, onRequestClose, toast }: Props) {
 
 const Action = styled.span`
   display: inline-block;
-  padding: 10px 12px;
-  height: 100%;
-  text-transform: uppercase;
-  font-size: 12px;
+  padding: 4px 8px;
   color: ${(props) => props.theme.toastText};
   background: ${(props) => darken(0.05, props.theme.toastBackground)};
-  border-top-right-radius: 5px;
-  border-bottom-right-radius: 5px;
+  border-radius: 4px;
+  margin-left: 8px;
+  margin-right: -4px;
+  font-weight: 500;
+  user-select: none;
 
   &:hover {
     background: ${(props) => darken(0.1, props.theme.toastBackground)};

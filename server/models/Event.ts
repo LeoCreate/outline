@@ -1,6 +1,7 @@
+import type { SaveOptions } from "sequelize";
 import {
   ForeignKey,
-  AfterCreate,
+  AfterSave,
   BeforeCreate,
   BelongsTo,
   Column,
@@ -8,22 +9,28 @@ import {
   IsUUID,
   Table,
   DataType,
+  Length,
 } from "sequelize-typescript";
 import { globalEventQueue } from "../queues";
+import { Event as TEvent } from "../types";
 import Collection from "./Collection";
 import Document from "./Document";
 import Team from "./Team";
 import User from "./User";
-import BaseModel from "./base/BaseModel";
+import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
 
-@Table({ tableName: "events", modelName: "event" })
+@Table({ tableName: "events", modelName: "event", updatedAt: false })
 @Fix
-class Event extends BaseModel {
+class Event extends IdModel {
   @IsUUID(4)
   @Column(DataType.UUID)
-  modelId: string;
+  modelId: string | null;
 
+  @Length({
+    max: 255,
+    msg: "name must be 255 characters or less",
+  })
   @Column
   name: string;
 
@@ -32,7 +39,7 @@ class Event extends BaseModel {
   ip: string | null;
 
   @Column(DataType.JSONB)
-  data: Record<string, any>;
+  data: Record<string, any> | null;
 
   // hooks
 
@@ -44,26 +51,30 @@ class Event extends BaseModel {
     }
   }
 
-  @AfterCreate
-  static async enqueue(model: Event) {
-    globalEventQueue.add(model);
+  @AfterSave
+  static async enqueue(model: Event, options: SaveOptions<Event>) {
+    if (options.transaction) {
+      options.transaction.afterCommit(() => void globalEventQueue.add(model));
+      return;
+    }
+    void globalEventQueue.add(model);
   }
 
   // associations
 
   @BelongsTo(() => User, "userId")
-  user: User;
+  user: User | null;
 
   @ForeignKey(() => User)
   @Column(DataType.UUID)
-  userId: string;
+  userId: string | null;
 
   @BelongsTo(() => Document, "documentId")
-  document: Document;
+  document: Document | null;
 
   @ForeignKey(() => Document)
   @Column(DataType.UUID)
-  documentId: string;
+  documentId: string | null;
 
   @BelongsTo(() => User, "actorId")
   actor: User;
@@ -73,11 +84,11 @@ class Event extends BaseModel {
   actorId: string;
 
   @BelongsTo(() => Collection, "collectionId")
-  collection: Collection;
+  collection: Collection | null;
 
   @ForeignKey(() => Collection)
   @Column(DataType.UUID)
-  collectionId: string;
+  collectionId: string | null;
 
   @BelongsTo(() => Team, "teamId")
   team: Team;
@@ -86,25 +97,27 @@ class Event extends BaseModel {
   @Column(DataType.UUID)
   teamId: string;
 
-  // add can be used to send events into the event system without recording them
-  // in the database or audit trail
-  static add(event: Partial<Event>) {
+  /*
+   * Schedule can be used to send events into the event system without recording
+   * them in the database or audit trail – consider using a task instead.
+   */
+  static schedule(event: Partial<Event>) {
     const now = new Date();
-    globalEventQueue.add(
+    return globalEventQueue.add(
       this.build({
         createdAt: now,
-        updatedAt: now,
         ...event,
       })
     );
   }
 
-  static ACTIVITY_EVENTS = [
+  static ACTIVITY_EVENTS: TEvent["name"][] = [
     "collections.create",
     "collections.delete",
     "collections.move",
     "collections.permission_changed",
     "documents.publish",
+    "documents.unpublish",
     "documents.archive",
     "documents.unarchive",
     "documents.move",
@@ -115,7 +128,7 @@ class Event extends BaseModel {
     "users.create",
   ];
 
-  static AUDIT_EVENTS = [
+  static AUDIT_EVENTS: TEvent["name"][] = [
     "api_keys.create",
     "api_keys.delete",
     "authenticationProviders.update",
@@ -128,7 +141,6 @@ class Event extends BaseModel {
     "collections.add_group",
     "collections.remove_group",
     "collections.delete",
-    "collections.export_all",
     "documents.create",
     "documents.publish",
     "documents.update",
@@ -152,12 +164,17 @@ class Event extends BaseModel {
     "users.create",
     "users.update",
     "users.signin",
+    "users.signout",
     "users.promote",
     "users.demote",
     "users.invite",
     "users.suspend",
     "users.activate",
     "users.delete",
+    "fileOperations.create",
+    "fileOperations.delete",
+    "webhookSubscriptions.create",
+    "webhookSubscriptions.delete",
   ];
 }
 

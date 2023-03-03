@@ -1,8 +1,8 @@
 import { findParentNode } from "prosemirror-utils";
 import React from "react";
 import getMenuItems from "../menus/block";
-import BlockMenuItem from "./BlockMenuItem";
 import CommandMenu, { Props } from "./CommandMenu";
+import CommandMenuItem from "./CommandMenuItem";
 
 type BlockMenuProps = Omit<
   Props,
@@ -25,17 +25,15 @@ function BlockMenu(props: BlockMenuProps) {
       {...props}
       filterable={true}
       onClearSearch={clearSearch}
-      renderMenuItem={(item, _index, options) => {
-        return (
-          <BlockMenuItem
-            onClick={options.onClick}
-            selected={options.selected}
-            icon={item.icon}
-            title={item.title}
-            shortcut={item.shortcut}
-          />
-        );
-      }}
+      renderMenuItem={(item, _index, options) => (
+        <CommandMenuItem
+          onClick={options.onClick}
+          selected={options.selected}
+          icon={item.icon}
+          title={item.title}
+          shortcut={item.shortcut}
+        />
+      )}
       items={getMenuItems(props.dictionary)}
     />
   );

@@ -6,6 +6,7 @@ import {
   useMenuState,
   MenuButton,
   MenuItem as BaseMenuItem,
+  MenuStateReturn,
 } from "reakit/Menu";
 import styled, { useTheme } from "styled-components";
 import Flex from "~/components/Flex";
@@ -21,10 +22,11 @@ import {
 } from "~/types";
 import Header from "./Header";
 import MenuItem, { MenuAnchor } from "./MenuItem";
+import MouseSafeArea from "./MouseSafeArea";
 import Separator from "./Separator";
 import ContextMenu from ".";
 
-type Props = {
+type Props = Omit<MenuStateReturn, "items"> & {
   actions?: (Action | MenuSeparator | MenuHeading)[];
   context?: Partial<ActionContext>;
   items?: TMenuItem[];
@@ -36,13 +38,15 @@ const Disclosure = styled(ExpandedIcon)`
   right: 8px;
 `;
 
-const Submenu = React.forwardRef(
+type SubMenuProps = MenuStateReturn & {
+  templateItems: TMenuItem[];
+  parentMenuState: Omit<MenuStateReturn, "items">;
+  title: React.ReactNode;
+};
+
+const SubMenu = React.forwardRef(
   (
-    {
-      templateItems,
-      title,
-      ...rest
-    }: { templateItems: TMenuItem[]; title: React.ReactNode },
+    { templateItems, title, parentMenuState, ...rest }: SubMenuProps,
     ref: React.LegacyRef<HTMLButtonElement>
   ) => {
     const { t } = useTranslation();
@@ -58,7 +62,12 @@ const Submenu = React.forwardRef(
             </MenuAnchor>
           )}
         </MenuButton>
-        <ContextMenu {...menu} aria-label={t("Submenu")}>
+        <ContextMenu
+          {...menu}
+          aria-label={t("Submenu")}
+          onClick={parentMenuState.hide}
+        >
+          <MouseSafeArea parentRef={menu.unstable_popoverRef} />
           <Template {...menu} items={templateItems} />
         </ContextMenu>
       </>
@@ -67,29 +76,27 @@ const Submenu = React.forwardRef(
 );
 
 export function filterTemplateItems(items: TMenuItem[]): TMenuItem[] {
-  let filtered = items.filter((item) => item.visible !== false);
-
-  // this block literally just trims unnecessary separators
-  filtered = filtered.reduce((acc, item, index) => {
-    // trim separators from start / end
-    if (item.type === "separator" && index === 0) {
-      return acc;
-    }
-    if (item.type === "separator" && index === filtered.length - 1) {
-      return acc;
-    }
-
-    // trim double separators looking ahead / behind
-    const prev = filtered[index - 1];
-    if (prev && prev.type === "separator" && item.type === "separator") {
-      return acc;
-    }
-
-    // otherwise, continue
-    return [...acc, item];
-  }, []);
-
-  return filtered;
+  return items
+    .filter((item) => item.visible !== false)
+    .reduce((acc, item) => {
+      // trim separator if the previous item was a separator
+      if (
+        item.type === "separator" &&
+        acc[acc.length - 1]?.type === "separator"
+      ) {
+        return acc;
+      }
+      return [...acc, item];
+    }, [] as TMenuItem[])
+    .filter((item, index, arr) => {
+      if (
+        item.type === "separator" &&
+        (index === 0 || index === arr.length - 1)
+      ) {
+        return false;
+      }
+      return true;
+    });
 }
 
 function Template({ items, actions, context, ...menu }: Props) {
@@ -177,8 +184,9 @@ function Template({ items, actions, context, ...menu }: Props) {
           return (
             <BaseMenuItem
               key={index}
-              as={Submenu}
+              as={SubMenu}
               templateItems={item.items}
+              parentMenuState={menu}
               title={<Title title={item.title} icon={item.icon} />}
               {...menu}
             />

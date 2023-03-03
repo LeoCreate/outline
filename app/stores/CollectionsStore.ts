@@ -1,9 +1,14 @@
 import invariant from "invariant";
 import { concat, find, last } from "lodash";
 import { computed, action } from "mobx";
+import {
+  CollectionPermission,
+  FileOperationFormat,
+  NavigationNode,
+} from "@shared/types";
 import Collection from "~/models/Collection";
-import { NavigationNode } from "~/types";
 import { client } from "~/utils/ApiClient";
+import { AuthorizationError, NotFoundError } from "~/utils/errors";
 import BaseStore from "./BaseStore";
 import RootStore from "./RootStore";
 
@@ -98,9 +103,10 @@ export default class CollectionsStore extends BaseStore<Collection> {
   }
 
   @action
-  import = async (attachmentId: string) => {
+  import = async (attachmentId: string, format?: string) => {
     await client.post("/collections.import", {
       type: "outline",
+      format,
       attachmentId,
     });
   };
@@ -111,7 +117,7 @@ export default class CollectionsStore extends BaseStore<Collection> {
       id: collectionId,
       index,
     });
-    invariant(res && res.success, "Collection could not be moved");
+    invariant(res?.success, "Collection could not be moved");
     const collection = this.get(collectionId);
 
     if (collection) {
@@ -153,11 +159,11 @@ export default class CollectionsStore extends BaseStore<Collection> {
       const res = await client.post(`/collections.info`, {
         id,
       });
-      invariant(res && res.data, "Collection not available");
+      invariant(res?.data, "Collection not available");
       this.addPolicies(res.policies);
       return this.add(res.data);
     } catch (err) {
-      if (err.statusCode === 403) {
+      if (err instanceof AuthorizationError || err instanceof NotFoundError) {
         this.remove(id);
       }
 
@@ -169,10 +175,25 @@ export default class CollectionsStore extends BaseStore<Collection> {
 
   @computed
   get publicCollections() {
-    return this.orderedData.filter((collection) =>
-      ["read", "read_write"].includes(collection.permission || "")
+    return this.orderedData.filter(
+      (collection) =>
+        collection.permission &&
+        Object.values(CollectionPermission).includes(collection.permission)
     );
   }
+
+  star = async (collection: Collection) => {
+    await this.rootStore.stars.create({
+      collectionId: collection.id,
+    });
+  };
+
+  unstar = async (collection: Collection) => {
+    const star = this.rootStore.stars.orderedData.find(
+      (star) => star.collectionId === collection.id
+    );
+    await star?.delete();
+  };
 
   getPathForDocument(documentId: string): DocumentPath | undefined {
     return this.pathsToDocuments.find((path) => path.id === documentId);
@@ -197,7 +218,9 @@ export default class CollectionsStore extends BaseStore<Collection> {
     this.rootStore.documents.fetchRecentlyViewed();
   };
 
-  export = () => {
-    return client.post("/collections.export_all");
+  export = (format: FileOperationFormat) => {
+    return client.post("/collections.export_all", {
+      format,
+    });
   };
 }

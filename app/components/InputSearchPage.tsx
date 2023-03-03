@@ -8,7 +8,7 @@ import useBoolean from "~/hooks/useBoolean";
 import useKeyDown from "~/hooks/useKeyDown";
 import { isModKey } from "~/utils/keyboard";
 import { searchPath } from "~/utils/routeHelpers";
-import Input from "./Input";
+import Input, { Outline } from "./Input";
 
 type Props = {
   source: string;
@@ -30,19 +30,16 @@ function InputSearchPage({
   collectionId,
   source,
 }: Props) {
-  const inputRef = React.useRef<Input>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
   const theme = useTheme();
   const history = useHistory();
   const { t } = useTranslation();
   const [isFocused, setFocused, setUnfocused] = useBoolean(false);
-  const focus = React.useCallback(() => {
-    inputRef.current?.focus();
-  }, []);
 
   useKeyDown("f", (ev: KeyboardEvent) => {
-    if (isModKey(ev)) {
+    if (isModKey(ev) && document.activeElement !== inputRef.current) {
       ev.preventDefault();
-      focus();
+      inputRef.current?.focus();
     }
   });
 
@@ -56,6 +53,10 @@ function InputSearchPage({
             ref: source,
           })
         );
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        inputRef.current?.blur();
       }
 
       if (onKeyDown) {
@@ -89,6 +90,10 @@ function InputSearchPage({
 
 const InputMaxWidth = styled(Input)`
   max-width: 30vw;
+
+  ${Outline} {
+    border-radius: 16px;
+  }
 `;
 
 export default observer(InputSearchPage);

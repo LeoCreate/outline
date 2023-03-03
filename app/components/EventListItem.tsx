@@ -1,21 +1,28 @@
+import { LocationDescriptor } from "history";
+import { observer } from "mobx-react";
 import {
   TrashIcon,
   ArchiveIcon,
   EditIcon,
   PublishIcon,
   MoveIcon,
-  CheckboxIcon,
+  UnpublishIcon,
+  LightningIcon,
 } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
-import styled from "styled-components";
+import { CompositeStateReturn } from "reakit/Composite";
+import styled, { css } from "styled-components";
 import Document from "~/models/Document";
 import Event from "~/models/Event";
 import Avatar from "~/components/Avatar";
+import CompositeItem, {
+  Props as ItemProps,
+} from "~/components/List/CompositeItem";
 import Item, { Actions } from "~/components/List/Item";
 import Time from "~/components/Time";
-import usePolicy from "~/hooks/usePolicy";
+import useStores from "~/hooks/useStores";
 import RevisionMenu from "~/menus/RevisionMenu";
 import { documentHistoryUrl } from "~/utils/routeHelpers";
 
@@ -23,33 +30,49 @@ type Props = {
   document: Document;
   event: Event;
   latest?: boolean;
-};
+} & CompositeStateReturn;
 
-const EventListItem = ({ event, latest, document }: Props) => {
+const EventListItem = ({ event, latest, document, ...rest }: Props) => {
   const { t } = useTranslation();
+  const { revisions } = useStores();
   const location = useLocation();
-  const can = usePolicy(document.id);
   const opts = {
     userName: event.actor.name,
   };
   const isRevision = event.name === "revisions.create";
-  let meta, icon, to;
+  let meta, icon, to: LocationDescriptor | undefined;
+
+  const ref = React.useRef<HTMLAnchorElement>(null);
+  // the time component tends to steal focus when clicked
+  // ...so forward the focus back to the parent item
+  const handleTimeClick = () => {
+    ref.current?.focus();
+  };
+
+  const prefetchRevision = () => {
+    if (event.name === "revisions.create" && event.modelId) {
+      revisions.fetch(event.modelId);
+    }
+  };
 
   switch (event.name) {
     case "revisions.create":
-    case "documents.latest_version": {
-      if (latest) {
-        icon = <CheckboxIcon color="currentColor" size={16} checked />;
-        meta = t("Latest version");
-        to = documentHistoryUrl(document);
-        break;
-      } else {
-        icon = <EditIcon color="currentColor" size={16} />;
-        meta = t("{{userName}} edited", opts);
-        to = documentHistoryUrl(document, event.modelId || "");
-        break;
-      }
-    }
+      icon = <EditIcon color="currentColor" size={16} />;
+      meta = t("{{userName}} edited", opts);
+      to = {
+        pathname: documentHistoryUrl(document, event.modelId || ""),
+        state: { retainScrollPosition: true },
+      };
+      break;
+
+    case "documents.live_editing":
+      icon = <LightningIcon color="currentColor" size={16} />;
+      meta = t("Latest");
+      to = {
+        pathname: documentHistoryUrl(document),
+        state: { retainScrollPosition: true },
+      };
+      break;
 
     case "documents.archive":
       icon = <ArchiveIcon color="currentColor" size={16} />;
@@ -74,6 +97,11 @@ const EventListItem = ({ event, latest, document }: Props) => {
       meta = t("{{userName}} published", opts);
       break;
 
+    case "documents.unpublish":
+      icon = <UnpublishIcon color="currentColor" size={16} />;
+      meta = t("{{userName}} unpublished", opts);
+      break;
+
     case "documents.move":
       icon = <MoveIcon color="currentColor" size={16} />;
       meta = t("{{userName}} moved", opts);
@@ -87,23 +115,34 @@ const EventListItem = ({ event, latest, document }: Props) => {
     return null;
   }
 
-  const isActive = location.pathname === to;
+  const isActive =
+    typeof to === "string"
+      ? location.pathname === to
+      : location.pathname === to?.pathname;
+
+  if (document.isDeleted) {
+    to = undefined;
+  }
 
   return (
-    <ListItem
+    <BaseItem
       small
       exact
-      to={document.isDeleted ? undefined : to}
+      to={to}
       title={
         <Time
           dateTime={event.createdAt}
           tooltipDelay={500}
-          format="MMM do, h:mm a"
+          format={{
+            en_US: "MMM do, h:mm a",
+            fr_FR: "'Le 'd MMMM 'à' H:mm",
+          }}
           relative={false}
           addSuffix
+          onClick={handleTimeClick}
         />
       }
-      image={<Avatar src={event.actor?.avatarUrl} size={32} />}
+      image={<Avatar model={event.actor} size={32} />}
       subtitle={
         <Subtitle>
           {icon}
@@ -111,13 +150,26 @@ const EventListItem = ({ event, latest, document }: Props) => {
         </Subtitle>
       }
       actions={
-        isRevision && isActive && event.modelId && can.update ? (
+        isRevision && isActive && event.modelId ? (
           <RevisionMenu document={document} revisionId={event.modelId} />
         ) : undefined
       }
+      onMouseEnter={prefetchRevision}
+      ref={ref}
+      {...rest}
     />
   );
 };
+
+const BaseItem = React.forwardRef(
+  ({ to, ...rest }: ItemProps, ref?: React.Ref<HTMLAnchorElement>) => {
+    if (to) {
+      return <CompositeListItem to={to} ref={ref} {...rest} />;
+    }
+
+    return <ListItem ref={ref} {...rest} />;
+  }
+);
 
 const Subtitle = styled.span`
   svg {
@@ -126,10 +178,10 @@ const Subtitle = styled.span`
   }
 `;
 
-const ListItem = styled(Item)`
+const ItemStyle = css`
   border: 0;
   position: relative;
-  margin: 8px;
+  margin: 8px 0;
   padding: 8px;
   border-radius: 8px;
 
@@ -172,4 +224,12 @@ const ListItem = styled(Item)`
   }
 `;
 
-export default EventListItem;
+const ListItem = styled(Item)`
+  ${ItemStyle}
+`;
+
+const CompositeListItem = styled(CompositeItem)`
+  ${ItemStyle}
+`;
+
+export default observer(EventListItem);

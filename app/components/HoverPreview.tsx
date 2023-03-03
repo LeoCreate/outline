@@ -2,9 +2,11 @@ import { transparentize } from "polished";
 import * as React from "react";
 import { Portal } from "react-portal";
 import styled from "styled-components";
+import { depths } from "@shared/styles";
 import parseDocumentSlug from "@shared/utils/parseDocumentSlug";
-import { isInternalUrl } from "@shared/utils/urls";
+import { isExternalUrl } from "@shared/utils/urls";
 import HoverPreviewDocument from "~/components/HoverPreviewDocument";
+import useMobile from "~/hooks/useMobile";
 import useStores from "~/hooks/useStores";
 import { fadeAndSlideDown } from "~/styles/animations";
 
@@ -12,14 +14,13 @@ const DELAY_OPEN = 300;
 const DELAY_CLOSE = 300;
 
 type Props = {
-  node: HTMLAnchorElement;
-  event: MouseEvent;
+  element: HTMLAnchorElement;
   onClose: () => void;
 };
 
-function HoverPreviewInternal({ node, onClose }: Props) {
+function HoverPreviewInternal({ element, onClose }: Props) {
   const { documents } = useStores();
-  const slug = parseDocumentSlug(node.href);
+  const slug = parseDocumentSlug(element.href);
   const [isVisible, setVisible] = React.useState(false);
   const timerClose = React.useRef<ReturnType<typeof setTimeout>>();
   const timerOpen = React.useRef<ReturnType<typeof setTimeout>>();
@@ -66,13 +67,13 @@ function HoverPreviewInternal({ node, onClose }: Props) {
       cardRef.current.addEventListener("mouseleave", startCloseTimer);
     }
 
-    node.addEventListener("mouseout", startCloseTimer);
-    node.addEventListener("mouseover", stopCloseTimer);
-    node.addEventListener("mouseover", startOpenTimer);
+    element.addEventListener("mouseout", startCloseTimer);
+    element.addEventListener("mouseover", stopCloseTimer);
+    element.addEventListener("mouseover", startOpenTimer);
     return () => {
-      node.removeEventListener("mouseout", startCloseTimer);
-      node.removeEventListener("mouseover", stopCloseTimer);
-      node.removeEventListener("mouseover", startOpenTimer);
+      element.removeEventListener("mouseout", startCloseTimer);
+      element.removeEventListener("mouseover", stopCloseTimer);
+      element.removeEventListener("mouseover", startOpenTimer);
 
       if (cardRef.current) {
         cardRef.current.removeEventListener("mouseenter", stopCloseTimer);
@@ -86,9 +87,9 @@ function HoverPreviewInternal({ node, onClose }: Props) {
         clearTimeout(timerClose.current);
       }
     };
-  }, [node, slug]);
+  }, [element, slug]);
 
-  const anchorBounds = node.getBoundingClientRect();
+  const anchorBounds = element.getBoundingClientRect();
   const cardBounds = cardRef.current?.getBoundingClientRect();
   const left = cardBounds
     ? Math.min(anchorBounds.left, window.innerWidth - 16 - 350)
@@ -103,7 +104,7 @@ function HoverPreviewInternal({ node, onClose }: Props) {
         aria-hidden
       >
         <div ref={cardRef}>
-          <HoverPreviewDocument url={node.href}>
+          <HoverPreviewDocument url={element.href}>
             {(content: React.ReactNode) =>
               isVisible ? (
                 <Animate>
@@ -122,13 +123,18 @@ function HoverPreviewInternal({ node, onClose }: Props) {
   );
 }
 
-function HoverPreview({ node, ...rest }: Props) {
-  // previews only work for internal doc links for now
-  if (!isInternalUrl(node.href)) {
+function HoverPreview({ element, ...rest }: Props) {
+  const isMobile = useMobile();
+  if (isMobile) {
     return null;
   }
 
-  return <HoverPreviewInternal {...rest} node={node} />;
+  // previews only work for internal doc links for now
+  if (isExternalUrl(element.href)) {
+    return null;
+  }
+
+  return <HoverPreviewInternal {...rest} element={element} />;
 }
 
 const Animate = styled.div`
@@ -150,7 +156,7 @@ const Margin = styled.div`
 
 const CardContent = styled.div`
   overflow: hidden;
-  max-height: 350px;
+  max-height: 20em;
   user-select: none;
 `;
 
@@ -195,7 +201,7 @@ const Card = styled.div`
 const Position = styled.div<{ fixed?: boolean; top?: number; left?: number }>`
   margin-top: 10px;
   position: ${({ fixed }) => (fixed ? "fixed" : "absolute")};
-  z-index: ${(props) => props.theme.depths.hoverPreview};
+  z-index: ${depths.hoverPreview};
   display: flex;
   max-height: 75%;
 

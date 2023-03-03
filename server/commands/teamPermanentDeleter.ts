@@ -1,6 +1,7 @@
 import { Transaction } from "sequelize";
 import { sequelize } from "@server/database/sequelize";
-import Logger from "@server/logging/logger";
+import Logger from "@server/logging/Logger";
+import { traceFunction } from "@server/logging/tracing";
 import {
   ApiKey,
   Attachment,
@@ -20,7 +21,7 @@ import {
   Share,
 } from "@server/models";
 
-export default async function teamPermanentDeleter(team: Team) {
+async function teamPermanentDeleter(team: Team) {
   if (!team.deletedAt) {
     throw new Error(
       `Cannot permanently delete ${team.id} team. Please delete it and try again.`
@@ -36,7 +37,7 @@ export default async function teamPermanentDeleter(team: Team) {
 
   try {
     transaction = await sequelize.transaction();
-    await Attachment.findAllInBatches(
+    await Attachment.findAllInBatches<Attachment>(
       {
         where: {
           teamId,
@@ -61,7 +62,7 @@ export default async function teamPermanentDeleter(team: Team) {
       }
     );
     // Destroy user-relation models
-    await User.findAllInBatches(
+    await User.findAllInBatches<User>(
       {
         attributes: ["id"],
         where: {
@@ -86,6 +87,13 @@ export default async function teamPermanentDeleter(team: Team) {
           force: true,
           transaction,
         });
+        await Event.destroy({
+          where: {
+            actorId: userIds,
+          },
+          force: true,
+          transaction,
+        });
       }
     );
     // Destory team-relation models
@@ -104,6 +112,13 @@ export default async function teamPermanentDeleter(team: Team) {
       force: true,
       transaction,
     });
+    await FileOperation.destroy({
+      where: {
+        teamId,
+      },
+      force: true,
+      transaction,
+    });
     await Collection.destroy({
       where: {
         teamId,
@@ -112,13 +127,6 @@ export default async function teamPermanentDeleter(team: Team) {
       transaction,
     });
     await Document.unscoped().destroy({
-      where: {
-        teamId,
-      },
-      force: true,
-      transaction,
-    });
-    await FileOperation.destroy({
       where: {
         teamId,
       },
@@ -167,13 +175,6 @@ export default async function teamPermanentDeleter(team: Team) {
       force: true,
       transaction,
     });
-    await User.destroy({
-      where: {
-        teamId,
-      },
-      force: true,
-      transaction,
-    });
     await team.destroy({
       force: true,
       transaction,
@@ -196,3 +197,7 @@ export default async function teamPermanentDeleter(team: Team) {
     throw err;
   }
 }
+
+export default traceFunction({
+  spanName: "teamPermanentDeleter",
+})(teamPermanentDeleter);

@@ -5,9 +5,10 @@ import {
   BelongsTo,
   Column,
 } from "sequelize-typescript";
+import { IntegrationService } from "@shared/types";
 import Team from "./Team";
 import User from "./User";
-import BaseModel from "./base/BaseModel";
+import IdModel from "./base/IdModel";
 import Encrypted, {
   getEncryptedColumn,
   setEncryptedColumn,
@@ -16,9 +17,9 @@ import Fix from "./decorators/Fix";
 
 @Table({ tableName: "authentications", modelName: "authentication" })
 @Fix
-class IntegrationAuthentication extends BaseModel {
-  @Column
-  service: string;
+class IntegrationAuthentication extends IdModel {
+  @Column(DataType.STRING)
+  service: IntegrationService;
 
   @Column(DataType.ARRAY(DataType.STRING))
   scopes: string[];

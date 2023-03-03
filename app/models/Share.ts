@@ -20,6 +20,10 @@ class Share extends BaseModel {
   @observable
   documentId: string;
 
+  @Field
+  @observable
+  urlId: string;
+
   documentTitle: string;
 
   documentUrl: string;
@@ -29,10 +33,6 @@ class Share extends BaseModel {
   url: string;
 
   createdBy: User;
-
-  createdAt: string;
-
-  updatedAt: string;
 }
 
 export default Share;

@@ -1,14 +1,28 @@
 import httpErrors from "http-errors";
-import env from "./env";
+
+export function InternalError(message = "Internal error") {
+  return httpErrors(500, message, {
+    id: "internal_error",
+  });
+}
 
 export function AuthenticationError(
-  message = "Invalid authentication",
-  // @ts-expect-error ts-migrate(2322) FIXME: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-  redirectUrl: string = env.URL
+  message = "Authentication required",
+  redirectUrl = "/"
 ) {
   return httpErrors(401, message, {
     redirectUrl,
     id: "authentication_required",
+  });
+}
+
+export function InvalidAuthenticationError(
+  message = "Invalid authentication",
+  redirectUrl = "/"
+) {
+  return httpErrors(401, message, {
+    redirectUrl,
+    id: "invalid_authentication",
   });
 }
 
@@ -17,6 +31,30 @@ export function AuthorizationError(
 ) {
   return httpErrors(403, message, {
     id: "permission_required",
+  });
+}
+
+export function RateLimitExceededError(
+  message = "Rate limit exceeded for this operation"
+) {
+  return httpErrors(429, message, {
+    id: "rate_limit_exceeded",
+  });
+}
+
+export function InviteRequiredError(
+  message = "You need an invite to join this team"
+) {
+  return httpErrors(403, message, {
+    id: "invite_required",
+  });
+}
+
+export function DomainNotAllowedError(
+  message = "The domain is not allowed for this team"
+) {
+  return httpErrors(403, message, {
+    id: "domain_not_allowed",
   });
 }
 
@@ -65,6 +103,14 @@ export function ValidationError(message = "Validation failed") {
   });
 }
 
+export function IncorrectEditionError(
+  message = "Functionality not available in this edition"
+) {
+  return httpErrors(402, message, {
+    id: "incorrect_edition",
+  });
+}
+
 export function EditorUpdateError(
   message = "The client editor is out of date and must be reloaded"
 ) {
@@ -97,8 +143,7 @@ export function MaximumTeamsError(
 
 export function EmailAuthenticationRequiredError(
   message = "User must authenticate with email",
-  // @ts-expect-error ts-migrate(2322) FIXME: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-  redirectUrl: string = env.URL
+  redirectUrl = "/"
 ) {
   return httpErrors(400, message, {
     redirectUrl,
@@ -114,19 +159,19 @@ export function MicrosoftGraphError(
   });
 }
 
-export function GoogleWorkspaceRequiredError(
-  message = "Google Workspace is required to authenticate"
+export function TeamDomainRequiredError(
+  message = "Unable to determine team from current domain or subdomain"
 ) {
   return httpErrors(400, message, {
-    id: "google_hd",
+    id: "domain_required",
   });
 }
 
-export function GoogleWorkspaceInvalidError(
-  message = "Google Workspace is invalid"
+export function GmailAccountCreationError(
+  message = "Cannot create account using personal gmail address"
 ) {
   return httpErrors(400, message, {
-    id: "hd_not_allowed",
+    id: "gmail_account_creation",
   });
 }
 
@@ -140,8 +185,7 @@ export function OIDCMalformedUserInfoError(
 
 export function AuthenticationProviderDisabledError(
   message = "Authentication method has been disabled by an admin",
-  // @ts-expect-error ts-migrate(2322) FIXME: Type 'string | undefined' is not assignable to typ... Remove this comment to see the full error message
-  redirectUrl: string = env.URL
+  redirectUrl = "/"
 ) {
   return httpErrors(400, message, {
     redirectUrl,

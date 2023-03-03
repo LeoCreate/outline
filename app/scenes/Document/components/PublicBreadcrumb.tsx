@@ -1,12 +1,13 @@
 import * as React from "react";
+import { NavigationNode } from "@shared/types";
 import Breadcrumb from "~/components/Breadcrumb";
-import { MenuInternalLink, NavigationNode } from "~/types";
+import { MenuInternalLink } from "~/types";
+import { sharedDocumentPath } from "~/utils/routeHelpers";
 
 type Props = {
   documentId: string;
   shareId: string;
   sharedTree: NavigationNode | undefined;
-  children?: React.ReactNode;
 };
 
 function pathToDocument(
@@ -38,18 +39,22 @@ function pathToDocument(
   return path;
 }
 
-const PublicBreadcrumb = ({
+const PublicBreadcrumb: React.FC<Props> = ({
   documentId,
   shareId,
   sharedTree,
   children,
-}: Props) => {
+}) => {
   const items: MenuInternalLink[] = React.useMemo(
     () =>
       pathToDocument(sharedTree, documentId)
         .slice(0, -1)
         .map((item) => {
-          return { ...item, type: "route", to: `/share/${shareId}${item.url}` };
+          return {
+            ...item,
+            type: "route",
+            to: sharedDocumentPath(shareId, item.url),
+          };
         }),
     [sharedTree, shareId, documentId]
   );

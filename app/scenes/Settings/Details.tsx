@@ -1,31 +1,52 @@
+import { isHexColor } from "class-validator";
+import { pickBy } from "lodash";
 import { observer } from "mobx-react";
 import { TeamIcon } from "outline-icons";
 import { useRef, useState } from "react";
 import * as React from "react";
 import { useTranslation, Trans } from "react-i18next";
+import { ThemeProvider, useTheme } from "styled-components";
+import { buildDarkTheme, buildLightTheme } from "@shared/styles/theme";
+import { CustomTheme } from "@shared/types";
+import { getBaseDomain } from "@shared/utils/domains";
 import Button from "~/components/Button";
 import DefaultCollectionInputSelect from "~/components/DefaultCollectionInputSelect";
 import Heading from "~/components/Heading";
 import Input from "~/components/Input";
+import InputColor from "~/components/InputColor";
 import Scene from "~/components/Scene";
 import Text from "~/components/Text";
 import env from "~/env";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
 import useStores from "~/hooks/useStores";
 import useToasts from "~/hooks/useToasts";
+import isCloudHosted from "~/utils/isCloudHosted";
 import ImageInput from "./components/ImageInput";
+import SettingRow from "./components/SettingRow";
 
 function Details() {
-  const { auth } = useStores();
+  const { auth, ui } = useStores();
   const { showToast } = useToasts();
   const { t } = useTranslation();
   const team = useCurrentTeam();
+  const theme = useTheme();
   const form = useRef<HTMLFormElement>(null);
+  const [accent, setAccent] = useState(team.preferences?.customTheme?.accent);
+  const [accentText, setAccentText] = useState(
+    team.preferences?.customTheme?.accentText
+  );
   const [name, setName] = useState(team.name);
   const [subdomain, setSubdomain] = useState(team.subdomain);
-  const [avatarUrl, setAvatarUrl] = useState<string>(team.avatarUrl);
   const [defaultCollectionId, setDefaultCollectionId] = useState<string | null>(
     team.defaultCollectionId
+  );
+
+  const customTheme: Partial<CustomTheme> = pickBy(
+    {
+      accent,
+      accentText,
+    },
+    isHexColor
   );
 
   const handleSubmit = React.useCallback(
@@ -37,9 +58,12 @@ function Details() {
       try {
         await auth.updateTeam({
           name,
-          avatarUrl,
           subdomain,
           defaultCollectionId,
+          preferences: {
+            ...team.preferences,
+            customTheme,
+          },
         });
         showToast(t("Settings saved"), {
           type: "success",
@@ -50,7 +74,16 @@ function Details() {
         });
       }
     },
-    [auth, name, avatarUrl, subdomain, defaultCollectionId, showToast, t]
+    [
+      auth,
+      name,
+      subdomain,
+      defaultCollectionId,
+      team.preferences,
+      customTheme,
+      showToast,
+      t,
+    ]
   );
 
   const handleNameChange = React.useCallback(
@@ -68,7 +101,6 @@ function Details() {
   );
 
   const handleAvatarUpload = async (avatarUrl: string) => {
-    setAvatarUrl(avatarUrl);
     await auth.updateTeam({
       avatarUrl,
     });
@@ -89,65 +121,131 @@ function Details() {
     setDefaultCollectionId(defaultCollectionId);
   }, []);
 
-  const isValid = form.current && form.current.checkValidity();
+  const isValid = form.current?.checkValidity();
+
+  const newTheme = React.useMemo(
+    () =>
+      ui.resolvedTheme === "light"
+        ? buildLightTheme(customTheme)
+        : buildDarkTheme(customTheme),
+    [customTheme, ui.resolvedTheme]
+  );
 
   return (
-    <Scene title={t("Details")} icon={<TeamIcon color="currentColor" />}>
-      <Heading>{t("Details")}</Heading>
-      <Text type="secondary">
-        <Trans>
-          These details affect the way that your Outline appears to everyone on
-          the team.
-        </Trans>
-      </Text>
+    <ThemeProvider theme={newTheme}>
+      <Scene title={t("Details")} icon={<TeamIcon color="currentColor" />}>
+        <Heading>{t("Details")}</Heading>
+        <Text type="secondary">
+          <Trans>
+            These settings affect the way that your knowledge base appears to
+            everyone on the team.
+          </Trans>
+        </Text>
 
-      <ImageInput
-        label={t("Logo")}
-        onSuccess={handleAvatarUpload}
-        onError={handleAvatarError}
-        src={avatarUrl}
-        borderRadius={0}
-      />
-
-      <form onSubmit={handleSubmit} ref={form}>
-        <Input
-          label={t("Name")}
-          name="name"
-          autoComplete="organization"
-          value={name}
-          onChange={handleNameChange}
-          required
-          short
-        />
-        {env.SUBDOMAINS_ENABLED && (
-          <>
+        <form onSubmit={handleSubmit} ref={form}>
+          <Heading as="h2">{t("Display")}</Heading>
+          <SettingRow
+            label={t("Logo")}
+            name="avatarUrl"
+            description={t(
+              "The logo is displayed at the top left of the application."
+            )}
+          >
+            <ImageInput
+              onSuccess={handleAvatarUpload}
+              onError={handleAvatarError}
+              model={team}
+              borderRadius={0}
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("Name")}
+            name="name"
+            description={t(
+              "The workspace name, usually the same as your company name."
+            )}
+          >
             <Input
-              label={t("Subdomain")}
-              name="subdomain"
+              id="name"
+              autoComplete="organization"
+              value={name}
+              onChange={handleNameChange}
+              required
+            />
+          </SettingRow>
+          <SettingRow
+            border={false}
+            label={t("Theme")}
+            name="accent"
+            description={t("Customize the interface look and feel.")}
+          >
+            <InputColor
+              id="accent"
+              value={accent ?? theme.accent}
+              label={t("Accent color")}
+              onChange={setAccent}
+              flex
+            />
+            <InputColor
+              id="accentText"
+              value={accentText ?? theme.accentText}
+              label={t("Accent text color")}
+              onChange={setAccentText}
+              flex
+            />
+          </SettingRow>
+
+          <Heading as="h2">{t("Behavior")}</Heading>
+
+          <SettingRow
+            visible={env.SUBDOMAINS_ENABLED && isCloudHosted}
+            label={t("Subdomain")}
+            name="subdomain"
+            description={
+              subdomain ? (
+                <>
+                  <Trans>Your knowledge base will be accessible at</Trans>{" "}
+                  <strong>
+                    {subdomain}.{getBaseDomain()}
+                  </strong>
+                </>
+              ) : (
+                t(
+                  "Choose a subdomain to enable a login page just for your team."
+                )
+              )
+            }
+          >
+            <Input
+              id="subdomain"
               value={subdomain || ""}
               onChange={handleSubdomainChange}
               autoComplete="off"
               minLength={4}
               maxLength={32}
-              short
             />
-            {subdomain && (
-              <Text type="secondary" size="small">
-                <Trans>Your knowledge base will be accessible at</Trans>{" "}
-                <strong>{subdomain}.getoutline.com</strong>
-              </Text>
+          </SettingRow>
+          <SettingRow
+            border={false}
+            label={t("Start view")}
+            name="defaultCollectionId"
+            description={t(
+              "This is the screen that workspace members will first see when they sign in."
             )}
-          </>
-        )}
-        <DefaultCollectionInputSelect
-          onSelectCollection={onSelectCollection}
-          defaultCollectionId={defaultCollectionId}
-        />
-        <Button type="submit" disabled={auth.isSaving || !isValid}>
-          {auth.isSaving ? `${t("Saving")}…` : t("Save")}
-        </Button>
-      </form>
-    </Scene>
+          >
+            <DefaultCollectionInputSelect
+              id="defaultCollectionId"
+              onSelectCollection={onSelectCollection}
+              defaultCollectionId={defaultCollectionId}
+            />
+          </SettingRow>
+
+          <Button type="submit" disabled={auth.isSaving || !isValid}>
+            {auth.isSaving ? `${t("Saving")}…` : t("Save")}
+          </Button>
+        </form>
+      </Scene>
+    </ThemeProvider>
   );
 }
 

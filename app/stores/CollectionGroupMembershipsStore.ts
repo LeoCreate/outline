@@ -1,9 +1,10 @@
 import invariant from "invariant";
 import { action, runInAction } from "mobx";
+import { CollectionPermission } from "@shared/types";
 import CollectionGroupMembership from "~/models/CollectionGroupMembership";
 import { PaginationParams } from "~/types";
 import { client } from "~/utils/ApiClient";
-import BaseStore, { RPCAction } from "./BaseStore";
+import BaseStore, { PAGINATION_SYMBOL, RPCAction } from "./BaseStore";
 import RootStore from "./RootStore";
 
 export default class CollectionGroupMembershipsStore extends BaseStore<
@@ -16,18 +17,24 @@ export default class CollectionGroupMembershipsStore extends BaseStore<
   }
 
   @action
-  fetchPage = async (params: PaginationParams | undefined): Promise<any> => {
+  fetchPage = async (
+    params: PaginationParams | undefined
+  ): Promise<CollectionGroupMembership[]> => {
     this.isFetching = true;
 
     try {
       const res = await client.post(`/collections.group_memberships`, params);
-      invariant(res && res.data, "Data not available");
+      invariant(res?.data, "Data not available");
+
+      let response: CollectionGroupMembership[] = [];
       runInAction(`CollectionGroupMembershipsStore#fetchPage`, () => {
         res.data.groups.forEach(this.rootStore.groups.add);
-        res.data.collectionGroupMemberships.forEach(this.add);
+        response = res.data.collectionGroupMemberships.map(this.add);
         this.isLoaded = true;
       });
-      return res.data.groups;
+
+      response[PAGINATION_SYMBOL] = res.pagination;
+      return response;
     } finally {
       this.isFetching = false;
     }
@@ -41,14 +48,14 @@ export default class CollectionGroupMembershipsStore extends BaseStore<
   }: {
     collectionId: string;
     groupId: string;
-    permission: string;
+    permission?: CollectionPermission;
   }) {
     const res = await client.post("/collections.add_group", {
       id: collectionId,
       groupId,
       permission,
     });
-    invariant(res && res.data, "Membership data should be available");
+    invariant(res?.data, "Membership data should be available");
 
     const cgm = res.data.collectionGroupMemberships.map(this.add);
     return cgm[0];

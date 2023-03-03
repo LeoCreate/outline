@@ -2,7 +2,7 @@ import * as React from "react";
 import { MenuSeparator } from "reakit/Menu";
 import styled from "styled-components";
 
-export default function Separator(rest: any) {
+export default function Separator(rest: React.HTMLAttributes<HTMLHRElement>) {
   return (
     <MenuSeparator {...rest}>
       {(props) => <HorizontalRule {...props} />}
@@ -11,5 +11,5 @@ export default function Separator(rest: any) {
 }
 
 const HorizontalRule = styled.hr`
-  margin: 0.5em 12px;
+  margin: 6px 0;
 `;

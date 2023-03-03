@@ -5,6 +5,8 @@ import * as React from "react";
 import AvatarEditor from "react-avatar-editor";
 import Dropzone from "react-dropzone";
 import styled from "styled-components";
+import { AttachmentPreset } from "@shared/types";
+import { AttachmentValidation } from "@shared/validations";
 import RootStore from "~/stores/RootStore";
 import Button from "~/components/Button";
 import Flex from "~/components/Flex";
@@ -14,10 +16,7 @@ import withStores from "~/components/withStores";
 import { compressImage } from "~/utils/compressImage";
 import { uploadFile, dataUrlToBlob } from "~/utils/files";
 
-const EMPTY_OBJECT = {};
-
 export type Props = {
-  children?: React.ReactNode;
   onSuccess: (url: string) => void | Promise<void>;
   onError: (error: string) => void;
   submitText?: string;
@@ -54,7 +53,7 @@ class ImageUpload extends React.Component<RootStore & Props> {
     this.isUploading = true;
     // allow the UI to update before converting the canvas to a Blob
     // for large images this can cause the page rendering to hang.
-    setImmediate(this.uploadImage);
+    setTimeout(this.uploadImage, 0);
   };
 
   uploadImage = async () => {
@@ -69,7 +68,7 @@ class ImageUpload extends React.Component<RootStore & Props> {
       });
       const attachment = await uploadFile(compressed, {
         name: this.file.name,
-        public: true,
+        preset: AttachmentPreset.Avatar,
       });
       this.props.onSuccess(attachment.url);
     } catch (err) {
@@ -85,7 +84,7 @@ class ImageUpload extends React.Component<RootStore & Props> {
     this.isCropping = false;
   };
 
-  handleZoom = (event: React.DragEvent<any>) => {
+  handleZoom = (event: React.ChangeEvent<HTMLInputElement>) => {
     const target = event.target;
 
     if (target instanceof HTMLInputElement) {
@@ -120,7 +119,6 @@ class ImageUpload extends React.Component<RootStore & Props> {
             max="2"
             step="0.01"
             defaultValue="1"
-            // @ts-expect-error ts-migrate(2769) FIXME: No overload matches this call.
             onChange={this.handleZoom}
           />
           <CropButton onClick={this.handleCrop} disabled={this.isUploading}>
@@ -138,11 +136,8 @@ class ImageUpload extends React.Component<RootStore & Props> {
 
     return (
       <Dropzone
-        accept="image/png, image/jpeg"
+        accept={AttachmentValidation.avatarContentTypes.join(", ")}
         onDropAccepted={this.onDropAccepted}
-        // @ts-expect-error ts-migrate(2322) FIXME: Type '{ children: ({ getRootProps, getInputProps }... Remove this comment to see the full error message
-        style={EMPTY_OBJECT}
-        disablePreview
       >
         {({ getRootProps, getInputProps }) => (
           <div {...getRootProps()}>
@@ -164,7 +159,7 @@ const RangeInput = styled.input`
   width: 300px;
   margin-bottom: 30px;
   height: 4px;
-  cursor: pointer;
+  cursor: var(--pointer);
   color: inherit;
   border-radius: 99999px;
   background-color: #dee1e3;
@@ -176,7 +171,7 @@ const RangeInput = styled.input`
     width: 16px;
     border-radius: 50%;
     background: ${(props) => props.theme.text};
-    cursor: pointer;
+    cursor: var(--pointer);
   }
 
   &:focus {

@@ -8,21 +8,20 @@ type Props = {
   icon?: React.ReactNode;
   title?: React.ReactNode;
   textTitle?: string;
-  children: React.ReactNode;
-  breadcrumb?: React.ReactNode;
+  left?: React.ReactNode;
   actions?: React.ReactNode;
   centered?: boolean;
 };
 
-function Scene({
+const Scene: React.FC<Props> = ({
   title,
   icon,
   textTitle,
   actions,
-  breadcrumb,
+  left,
   children,
   centered,
-}: Props) {
+}) => {
   return (
     <FillWidth>
       <PageTitle title={textTitle || title} />
@@ -38,7 +37,7 @@ function Scene({
           )
         }
         actions={actions}
-        breadcrumb={breadcrumb}
+        left={left}
       />
       {centered !== false ? (
         <CenteredContent withStickyHeader>{children}</CenteredContent>
@@ -47,7 +46,7 @@ function Scene({
       )}
     </FillWidth>
   );
-}
+};
 
 const FillWidth = styled.div`
   width: 100%;

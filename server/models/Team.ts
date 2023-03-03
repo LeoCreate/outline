@@ -11,28 +11,42 @@ import {
   Table,
   Unique,
   IsIn,
-  BeforeSave,
   HasMany,
   Scopes,
-  Length,
   Is,
   DataType,
+  IsUUID,
+  IsUrl,
+  AllowNull,
+  AfterUpdate,
 } from "sequelize-typescript";
-import { v4 as uuidv4 } from "uuid";
-import { stripSubdomain, RESERVED_SUBDOMAINS } from "@shared/utils/domains";
-import Logger from "@server/logging/logger";
-import { generateAvatarUrl } from "@server/utils/avatars";
-import { publicS3Endpoint, uploadToS3FromUrl } from "@server/utils/s3";
+import {
+  CollectionPermission,
+  TeamPreference,
+  TeamPreferences,
+} from "@shared/types";
+import { getBaseDomain, RESERVED_SUBDOMAINS } from "@shared/utils/domains";
+import env from "@server/env";
+import DeleteAttachmentTask from "@server/queues/tasks/DeleteAttachmentTask";
+import parseAttachmentIds from "@server/utils/parseAttachmentIds";
+import Attachment from "./Attachment";
 import AuthenticationProvider from "./AuthenticationProvider";
 import Collection from "./Collection";
 import Document from "./Document";
+import TeamDomain from "./TeamDomain";
 import User from "./User";
 import ParanoidModel from "./base/ParanoidModel";
 import Fix from "./decorators/Fix";
+import IsFQDN from "./validators/IsFQDN";
+import Length from "./validators/Length";
+import NotContainsUrl from "./validators/NotContainsUrl";
 
 const readFile = util.promisify(fs.readFile);
 
 @Scopes(() => ({
+  withDomains: {
+    include: [{ model: TeamDomain }],
+  },
   withAuthenticationProviders: {
     include: [
       {
@@ -45,12 +59,20 @@ const readFile = util.promisify(fs.readFile);
 @Table({ tableName: "teams", modelName: "team" })
 @Fix
 class Team extends ParanoidModel {
+  @NotContainsUrl
+  @Length({ min: 2, max: 255, msg: "name must be between 2 to 255 characters" })
   @Column
   name: string;
 
   @IsLowercase
   @Unique
-  @Length({ min: 4, max: 32, msg: "Must be between 4 and 32 characters" })
+  @Length({
+    min: 2,
+    max: env.isCloudHosted() ? 32 : 255,
+    msg: `subdomain must be between 2 and ${
+      env.isCloudHosted() ? 32 : 255
+    } characters`,
+  })
   @Is({
     args: [/^[a-z\d-]+$/, "i"],
     msg: "Must be only alphanumeric and dashes",
@@ -63,18 +85,40 @@ class Team extends ParanoidModel {
   subdomain: string | null;
 
   @Unique
+  @Length({ max: 255, msg: "domain must be 255 characters or less" })
+  @IsFQDN
   @Column
   domain: string | null;
 
+  @IsUUID(4)
   @Column(DataType.UUID)
   defaultCollectionId: string | null;
 
-  @Column
-  avatarUrl: string | null;
+  @AllowNull
+  @IsUrl
+  @Length({ max: 4096, msg: "avatarUrl must be 4096 characters or less" })
+  @Column(DataType.STRING)
+  get avatarUrl() {
+    const original = this.getDataValue("avatarUrl");
+
+    if (original && !original.startsWith("https://tiley.herokuapp.com")) {
+      return original;
+    }
+
+    return null;
+  }
+
+  set avatarUrl(value: string | null) {
+    this.setDataValue("avatarUrl", value);
+  }
 
   @Default(true)
   @Column
   sharing: boolean;
+
+  @Default(false)
+  @Column
+  inviteRequired: boolean;
 
   @Default(true)
   @Column(DataType.JSONB)
@@ -88,7 +132,11 @@ class Team extends ParanoidModel {
   @Column
   documentEmbeds: boolean;
 
-  @Default(false)
+  @Default(true)
+  @Column
+  memberCollectionCreate: boolean;
+
+  @Default(true)
   @Column
   collaborativeEditing: boolean;
 
@@ -97,103 +145,122 @@ class Team extends ParanoidModel {
   @Column
   defaultUserRole: string;
 
+  @AllowNull
+  @Column(DataType.JSONB)
+  preferences: TeamPreferences | null;
+
   // getters
 
-  get url() {
-    if (this.domain) {
-      return `https://${this.domain}`;
-    }
-
-    if (!this.subdomain || process.env.SUBDOMAINS_ENABLED !== "true") {
-      return process.env.URL;
-    }
-
-    const url = new URL(process.env.URL || "");
-    url.host = `${this.subdomain}.${stripSubdomain(url.host)}`;
-    return url.href.replace(/\/$/, "");
-  }
-
-  get logoUrl() {
+  /**
+   * Returns whether the team has email login enabled. For self-hosted installs
+   * this also considers whether SMTP connection details have been configured.
+   *
+   * @return {boolean} Whether to show email login options
+   */
+  get emailSigninEnabled(): boolean {
     return (
-      this.avatarUrl ||
-      generateAvatarUrl({
-        id: this.id,
-        name: this.name,
-      })
+      this.guestSignin && (!!env.SMTP_HOST || env.ENVIRONMENT === "development")
     );
   }
 
-  // TODO: Move to command
-  provisionSubdomain = async function (
-    requestedSubdomain: string,
-    options = {}
-  ) {
-    if (this.subdomain) {
-      return this.subdomain;
-    }
-    let subdomain = requestedSubdomain;
-    let append = 0;
+  get url() {
+    const url = new URL(env.URL);
 
-    for (;;) {
-      try {
-        await this.update(
-          {
-            subdomain,
-          },
-          options
-        );
-        break;
-      } catch (err) {
-        // subdomain was invalid or already used, try again
-        subdomain = `${requestedSubdomain}${++append}`;
-      }
+    // custom domain
+    if (this.domain) {
+      return `${url.protocol}//${this.domain}${url.port ? `:${url.port}` : ""}`;
     }
 
-    return subdomain;
+    if (!this.subdomain || !env.SUBDOMAINS_ENABLED) {
+      return env.URL;
+    }
+
+    url.host = `${this.subdomain}.${getBaseDomain()}`;
+    return url.href.replace(/\/$/, "");
+  }
+
+  /**
+   * Preferences that decide behavior for the team.
+   *
+   * @param preference The team preference to set
+   * @param value Sets the preference value
+   * @returns The current team preferences
+   */
+  public setPreference = <T extends keyof TeamPreferences>(
+    preference: T,
+    value: TeamPreferences[T]
+  ) => {
+    if (!this.preferences) {
+      this.preferences = {};
+    }
+    this.preferences[preference] = value;
+    this.changed("preferences", true);
+
+    return this.preferences;
   };
 
-  provisionFirstCollection = async function (userId: string) {
-    const collection = await Collection.create({
-      name: "Welcome",
-      description:
-        "This collection is a quick guide to what Outline is all about. Feel free to delete this collection once your team is up to speed with the basics!",
-      teamId: this.id,
-      createdById: userId,
-      sort: Collection.DEFAULT_SORT,
-      permission: "read_write",
-    });
+  /**
+   * Returns the passed preference value
+   *
+   * @param preference The user preference to retrieve
+   * @param fallback An optional fallback value, defaults to false.
+   * @returns The preference value if set, else undefined
+   */
+  public getPreference = (preference: TeamPreference, fallback = false) => {
+    return this.preferences?.[preference] ?? fallback;
+  };
 
-    // For the first collection we go ahead and create some intitial documents to get
-    // the team started. You can edit these in /server/onboarding/x.md
-    const onboardingDocs = [
-      "Integrations & API",
-      "Our Editor",
-      "Getting Started",
-      "What is Outline",
-    ];
-
-    for (const title of onboardingDocs) {
-      const text = await readFile(
-        path.join(process.cwd(), "server", "onboarding", `${title}.md`),
-        "utf8"
+  provisionFirstCollection = async (userId: string) => {
+    await this.sequelize!.transaction(async (transaction) => {
+      const collection = await Collection.create(
+        {
+          name: "Welcome",
+          description: `This collection is a quick guide to what ${env.APP_NAME} is all about. Feel free to delete this collection once your team is up to speed with the basics!`,
+          teamId: this.id,
+          createdById: userId,
+          sort: Collection.DEFAULT_SORT,
+          permission: CollectionPermission.ReadWrite,
+        },
+        {
+          transaction,
+        }
       );
-      const document = await Document.create({
-        version: 2,
-        isWelcome: true,
-        parentDocumentId: null,
-        collectionId: collection.id,
-        teamId: collection.teamId,
-        userId: collection.createdById,
-        lastModifiedById: collection.createdById,
-        createdById: collection.createdById,
-        title,
-        text,
-      });
-      await document.publish(collection.createdById);
-    }
+
+      // For the first collection we go ahead and create some intitial documents to get
+      // the team started. You can edit these in /server/onboarding/x.md
+      const onboardingDocs = [
+        "Integrations & API",
+        "Our Editor",
+        "Getting Started",
+        "What is Outline",
+      ];
+
+      for (const title of onboardingDocs) {
+        const text = await readFile(
+          path.join(process.cwd(), "server", "onboarding", `${title}.md`),
+          "utf8"
+        );
+        const document = await Document.create(
+          {
+            version: 2,
+            isWelcome: true,
+            parentDocumentId: null,
+            collectionId: collection.id,
+            teamId: collection.teamId,
+            userId: collection.createdById,
+            lastModifiedById: collection.createdById,
+            createdById: collection.createdById,
+            title,
+            text,
+          },
+          { transaction }
+        );
+        await document.publish(collection.createdById, { transaction });
+      }
+    });
   };
 
-  collectionIds = async function (paranoid = true) {
+  public collectionIds = async function (this: Team, paranoid = true) {
     const models = await Collection.findAll({
       attributes: ["id"],
       where: {
@@ -205,6 +272,25 @@ class Team extends ParanoidModel {
       paranoid,
     });
     return models.map((c) => c.id);
+  };
+
+  /**
+   * Find whether the passed domain can be used to sign-in to this team. Note
+   * that this method always returns true if no domain restrictions are set.
+   *
+   * @param domain The domain to check
+   * @returns True if the domain is allowed to sign-in to this team
+   */
+  public isDomainAllowed = async function (
+    this: Team,
+    domain: string
+  ): Promise<boolean> {
+    const allowedDomains = (await this.$get("allowedDomains")) || [];
+
+    return (
+      allowedDomains.length === 0 ||
+      allowedDomains.map((d: TeamDomain) => d.name).includes(domain)
+    );
   };
 
   // associations
@@ -221,30 +307,36 @@ class Team extends ParanoidModel {
   @HasMany(() => AuthenticationProvider)
   authenticationProviders: AuthenticationProvider[];
 
+  @HasMany(() => TeamDomain)
+  allowedDomains: TeamDomain[];
+
   // hooks
 
-  @BeforeSave
-  static uploadAvatar = async (model: Team) => {
-    const endpoint = publicS3Endpoint();
-    const { avatarUrl } = model;
-
+  @AfterUpdate
+  static deletePreviousAvatar = async (model: Team) => {
     if (
-      avatarUrl &&
-      !avatarUrl.startsWith("/api") &&
-      !avatarUrl.startsWith(endpoint)
+      model.previous("avatarUrl") &&
+      model.previous("avatarUrl") !== model.avatarUrl
     ) {
-      try {
-        const newUrl = await uploadToS3FromUrl(
-          avatarUrl,
-          `avatars/${model.id}/${uuidv4()}`,
-          "public-read"
-        );
-        if (newUrl) {
-          model.avatarUrl = newUrl;
-        }
-      } catch (err) {
-        Logger.error("Error uploading avatar to S3", err, {
-          url: avatarUrl,
+      const attachmentIds = parseAttachmentIds(
+        model.previous("avatarUrl"),
+        true
+      );
+      if (!attachmentIds.length) {
+        return;
+      }
+
+      const attachment = await Attachment.findOne({
+        where: {
+          id: attachmentIds[0],
+          teamId: model.id,
+        },
+      });
+
+      if (attachment) {
+        await DeleteAttachmentTask.schedule({
+          attachmentId: attachment.id,
+          teamId: model.id,
         });
       }
     }

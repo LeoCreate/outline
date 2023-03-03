@@ -1,8 +1,11 @@
 import styled from "styled-components";
 
 type Props = {
-  type?: "secondary" | "tertiary";
-  size?: "small" | "xsmall";
+  type?: "secondary" | "tertiary" | "danger";
+  size?: "large" | "small" | "xsmall";
+  dir?: "ltr" | "rtl" | "auto";
+  selectable?: boolean;
+  weight?: "bold" | "normal";
 };
 
 /**
@@ -11,20 +14,31 @@ type Props = {
  */
 const Text = styled.p<Props>`
   margin-top: 0;
+  text-align: ${(props) => (props.dir ? props.dir : "left")};
   color: ${(props) =>
     props.type === "secondary"
       ? props.theme.textSecondary
       : props.type === "tertiary"
       ? props.theme.textTertiary
+      : props.type === "danger"
+      ? props.theme.brand.red
       : props.theme.text};
   font-size: ${(props) =>
-    props.size === "small"
+    props.size === "large"
+      ? "18px"
+      : props.size === "small"
       ? "14px"
       : props.size === "xsmall"
       ? "13px"
       : "inherit"};
+  font-weight: ${(props) =>
+    props.weight === "bold"
+      ? "bold"
+      : props.weight === "normal"
+      ? "normal"
+      : "inherit"};
   white-space: normal;
-  user-select: none;
+  user-select: ${(props) => (props.selectable ? "text" : "none")};
 `;
 
 export default Text;

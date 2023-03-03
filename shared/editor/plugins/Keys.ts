@@ -16,34 +16,34 @@ export default class Keys extends Extension {
 
   keys(): Record<string, Command> {
     const onCancel = () => {
-      if (this.options.onCancel) {
-        this.options.onCancel();
+      if (this.editor.props.onCancel) {
+        this.editor.props.onCancel();
         return true;
       }
       return false;
     };
 
     return {
-      // No-ops prevent Tab escaping the editor bounds
-      Tab: () => true,
-      "Shift-Tab": () => true,
-
       // Shortcuts for when editor has separate edit mode
       "Mod-Escape": onCancel,
       "Shift-Escape": onCancel,
       "Mod-s": () => {
-        if (this.options.onSave) {
-          this.options.onSave();
+        if (this.editor.props.onSave) {
+          this.editor.props.onSave({ done: false });
           return true;
         }
         return false;
       },
       "Mod-Enter": (state: EditorState) => {
-        if (!isInCode(state) && this.options.onSaveAndExit) {
-          this.options.onSaveAndExit();
+        if (!isInCode(state) && this.editor.props.onSave) {
+          this.editor.props.onSave({ done: true });
           return true;
         }
         return false;
+      },
+      Escape: () => {
+        (this.editor.view.dom as HTMLElement).blur();
+        return true;
       },
     };
   }
@@ -52,10 +52,6 @@ export default class Keys extends Extension {
     return [
       new Plugin({
         props: {
-          handleDOMEvents: {
-            blur: this.options.onBlur,
-            focus: this.options.onFocus,
-          },
           // we can't use the keys bindings for this as we want to preventDefault
           // on the original keyboard event when handled
           handleKeyDown: (view, event) => {

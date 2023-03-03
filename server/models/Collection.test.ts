@@ -7,13 +7,16 @@ import {
   buildTeam,
   buildDocument,
 } from "@server/test/factories";
-import { flushdb, seed } from "@server/test/support";
+import { setupTestDatabase, seed } from "@server/test/support";
 import slugify from "@server/utils/slugify";
 import Collection from "./Collection";
 import Document from "./Document";
 
-beforeEach(() => flushdb());
-beforeEach(jest.resetAllMocks);
+setupTestDatabase();
+
+beforeEach(() => {
+  jest.resetAllMocks();
+});
 
 describe("#url", () => {
   test("should return correct url for the collection", () => {
@@ -30,7 +33,10 @@ describe("getDocumentParents", () => {
     const document = await buildDocument();
     const collection = await buildCollection({
       documentStructure: [
-        { ...parent.toJSON(), children: [document.toJSON()] },
+        {
+          ...(await parent.toNavigationNode()),
+          children: [await document.toNavigationNode()],
+        },
       ],
     });
     const result = collection.getDocumentParents(document.id);
@@ -43,7 +49,10 @@ describe("getDocumentParents", () => {
     const document = await buildDocument();
     const collection = await buildCollection({
       documentStructure: [
-        { ...parent.toJSON(), children: [document.toJSON()] },
+        {
+          ...(await parent.toNavigationNode()),
+          children: [await document.toNavigationNode()],
+        },
       ],
     });
     const result = collection.getDocumentParents(parent.id);
@@ -63,9 +72,11 @@ describe("getDocumentTree", () => {
   test("should return document tree", async () => {
     const document = await buildDocument();
     const collection = await buildCollection({
-      documentStructure: [document.toJSON()],
+      documentStructure: [await document.toNavigationNode()],
     });
-    expect(collection.getDocumentTree(document.id)).toEqual(document.toJSON());
+    expect(collection.getDocumentTree(document.id)).toEqual(
+      await document.toNavigationNode()
+    );
   });
 
   test("should return nested documents in tree", async () => {
@@ -73,65 +84,20 @@ describe("getDocumentTree", () => {
     const document = await buildDocument();
     const collection = await buildCollection({
       documentStructure: [
-        { ...parent.toJSON(), children: [document.toJSON()] },
+        {
+          ...(await parent.toNavigationNode()),
+          children: [await document.toNavigationNode()],
+        },
       ],
     });
 
     expect(collection.getDocumentTree(parent.id)).toEqual({
-      ...parent.toJSON(),
-      children: [document.toJSON()],
+      ...(await parent.toNavigationNode()),
+      children: [await document.toNavigationNode()],
     });
-    expect(collection.getDocumentTree(document.id)).toEqual(document.toJSON());
-  });
-});
-
-describe("isChildDocument", () => {
-  test("should return false with unexpected data", async () => {
-    const document = await buildDocument();
-    const collection = await buildCollection({
-      documentStructure: [document.toJSON()],
-    });
-    expect(collection.isChildDocument(document.id, document.id)).toEqual(false);
-    expect(collection.isChildDocument(document.id, undefined)).toEqual(false);
-    expect(collection.isChildDocument(undefined, document.id)).toEqual(false);
-  });
-
-  test("should return false if sibling", async () => {
-    const one = await buildDocument();
-    const document = await buildDocument();
-    const collection = await buildCollection({
-      documentStructure: [one.toJSON(), document.toJSON()],
-    });
-    expect(collection.isChildDocument(one.id, document.id)).toEqual(false);
-    expect(collection.isChildDocument(document.id, one.id)).toEqual(false);
-  });
-
-  test("should return true if direct child of parent", async () => {
-    const parent = await buildDocument();
-    const document = await buildDocument();
-    const collection = await buildCollection({
-      documentStructure: [
-        { ...parent.toJSON(), children: [document.toJSON()] },
-      ],
-    });
-    expect(collection.isChildDocument(parent.id, document.id)).toEqual(true);
-    expect(collection.isChildDocument(document.id, parent.id)).toEqual(false);
-  });
-
-  test("should return true if nested child of parent", async () => {
-    const parent = await buildDocument();
-    const nested = await buildDocument();
-    const document = await buildDocument();
-    const collection = await buildCollection({
-      documentStructure: [
-        {
-          ...parent.toJSON(),
-          children: [{ ...nested.toJSON(), children: [document.toJSON()] }],
-        },
-      ],
-    });
-    expect(collection.isChildDocument(parent.id, document.id)).toEqual(true);
-    expect(collection.isChildDocument(document.id, parent.id)).toEqual(false);
+    expect(collection.getDocumentTree(document.id)).toEqual(
+      await document.toNavigationNode()
+    );
   });
 });
 
@@ -139,10 +105,11 @@ describe("#addDocumentToStructure", () => {
   test("should add as last element without index", async () => {
     const { collection } = await seed();
     const id = uuidv4();
-    const newDocument = new Document({
+    const newDocument = await buildDocument({
       id,
       title: "New end node",
       parentDocumentId: null,
+      teamId: collection.teamId,
     });
     await collection.addDocumentToStructure(newDocument);
     expect(collection.documentStructure!.length).toBe(2);
@@ -152,10 +119,11 @@ describe("#addDocumentToStructure", () => {
   test("should add with an index", async () => {
     const { collection } = await seed();
     const id = uuidv4();
-    const newDocument = new Document({
+    const newDocument = await buildDocument({
       id,
       title: "New end node",
       parentDocumentId: null,
+      teamId: collection.teamId,
     });
     await collection.addDocumentToStructure(newDocument, 1);
     expect(collection.documentStructure!.length).toBe(2);
@@ -165,10 +133,11 @@ describe("#addDocumentToStructure", () => {
   test("should add as a child if with parent", async () => {
     const { collection, document } = await seed();
     const id = uuidv4();
-    const newDocument = new Document({
+    const newDocument = await buildDocument({
       id,
       title: "New end node",
       parentDocumentId: document.id,
+      teamId: collection.teamId,
     });
     await collection.addDocumentToStructure(newDocument, 1);
     expect(collection.documentStructure!.length).toBe(1);
@@ -179,16 +148,18 @@ describe("#addDocumentToStructure", () => {
 
   test("should add as a child if with parent with index", async () => {
     const { collection, document } = await seed();
-    const newDocument = new Document({
+    const newDocument = await buildDocument({
       id: uuidv4(),
       title: "node",
       parentDocumentId: document.id,
+      teamId: collection.teamId,
     });
     const id = uuidv4();
-    const secondDocument = new Document({
+    const secondDocument = await buildDocument({
       id,
       title: "New start node",
       parentDocumentId: document.id,
+      teamId: collection.teamId,
     });
     await collection.addDocumentToStructure(newDocument);
     await collection.addDocumentToStructure(secondDocument, 0);
@@ -201,10 +172,11 @@ describe("#addDocumentToStructure", () => {
     test("should append supplied json over document's own", async () => {
       const { collection } = await seed();
       const id = uuidv4();
-      const newDocument = new Document({
+      const newDocument = await buildDocument({
         id: uuidv4(),
         title: "New end node",
         parentDocumentId: null,
+        teamId: collection.teamId,
       });
       await collection.addDocumentToStructure(newDocument, undefined, {
         documentJson: {
@@ -422,17 +394,24 @@ describe("#findByPk", () => {
     expect(response!.id).toBe(collection.id);
   });
 
-  test("should return undefined when incorrect uuid type", async () => {
+  test("should return collection when urlId is present, but missing slug", async () => {
     const collection = await buildCollection();
-    const response = await Collection.findByPk(collection.id + "-incorrect");
-    expect(response).toBe(undefined);
+    const id = collection.urlId;
+    const response = await Collection.findByPk(id);
+    expect(response!.id).toBe(collection.id);
   });
 
-  test("should return undefined when incorrect urlId length", async () => {
+  test("should return null when incorrect uuid type", async () => {
+    const collection = await buildCollection();
+    const response = await Collection.findByPk(collection.id + "-incorrect");
+    expect(response).toBe(null);
+  });
+
+  test("should return null when incorrect urlId length", async () => {
     const collection = await buildCollection();
     const id = `${slugify(collection.name)}-${collection.urlId}incorrect`;
     const response = await Collection.findByPk(id);
-    expect(response).toBe(undefined);
+    expect(response).toBe(null);
   });
 
   test("should return null when no collection is found with uuid", async () => {

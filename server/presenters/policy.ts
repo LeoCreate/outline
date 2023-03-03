@@ -1,3 +1,5 @@
+import { compact } from "lodash";
+import { traceFunction } from "@server/logging/tracing";
 import { User } from "@server/models";
 
 type Policy = {
@@ -5,15 +7,19 @@ type Policy = {
   abilities: Record<string, boolean>;
 };
 
-export default function present(
+function presentPolicy(
   user: User,
-  objects: Record<string, any>[]
+  objects: (Record<string, any> | null)[]
 ): Policy[] {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { serialize } = require("../policies");
 
-  return objects.map((object) => ({
+  return compact(objects).map((object) => ({
     id: object.id,
     abilities: serialize(user, object),
   }));
 }
+
+export default traceFunction({
+  spanName: "presenters",
+})(presentPolicy);

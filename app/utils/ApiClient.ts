@@ -1,16 +1,20 @@
 import retry from "fetch-retry";
 import invariant from "invariant";
-import { map, trim } from "lodash";
-import { getCookie } from "tiny-cookie";
+import { trim } from "lodash";
+import queryString from "query-string";
 import EDITOR_VERSION from "@shared/editor/version";
 import stores from "~/stores";
+import isCloudHosted from "~/utils/isCloudHosted";
+import Logger from "./Logger";
 import download from "./download";
 import {
   AuthorizationError,
+  BadGatewayError,
   BadRequestError,
   NetworkError,
   NotFoundError,
   OfflineError,
+  RateLimitExceededError,
   RequestError,
   ServiceUnavailableError,
   UpdateRequiredError,
@@ -19,28 +23,27 @@ import {
 type Options = {
   baseUrl?: string;
 };
-// authorization cookie set by a Cloudflare Access proxy
-const CF_AUTHORIZATION = getCookie("CF_Authorization");
 
-// if the cookie is set, we must pass it with all ApiClient requests
-const CREDENTIALS = CF_AUTHORIZATION ? "same-origin" : "omit";
+type FetchOptions = {
+  download?: boolean;
+  credentials?: "omit" | "same-origin" | "include";
+  headers?: Record<string, string>;
+};
+
 const fetchWithRetry = retry(fetch);
 
 class ApiClient {
   baseUrl: string;
 
-  userAgent: string;
-
   constructor(options: Options = {}) {
     this.baseUrl = options.baseUrl || "/api";
-    this.userAgent = "OutlineFrontend";
   }
 
   fetch = async (
     path: string,
     method: string,
     data: Record<string, any> | FormData | undefined,
-    options: Record<string, any> = {}
+    options: FetchOptions = {}
   ) => {
     let body: string | FormData | undefined;
     let modifiedPath;
@@ -49,7 +52,7 @@ class ApiClient {
 
     if (method === "GET") {
       if (data) {
-        modifiedPath = `${path}?${data && this.constructQueryString(data)}`;
+        modifiedPath = `${path}?${data && queryString.stringify(data)}`;
       } else {
         modifiedPath = path;
       }
@@ -76,11 +79,12 @@ class ApiClient {
       urlToFetch = this.baseUrl + (modifiedPath || path);
     }
 
-    const headerOptions: any = {
+    const headerOptions: Record<string, string> = {
       Accept: "application/json",
       "cache-control": "no-cache",
       "x-editor-version": EDITOR_VERSION,
       pragma: "no-cache",
+      ...options?.headers,
     };
 
     // for multipart forms or other non JSON requests fetch
@@ -98,6 +102,7 @@ class ApiClient {
     }
 
     let response;
+    const timeStart = window.performance.now();
 
     try {
       response = await fetchWithRetry(urlToFetch, {
@@ -105,7 +110,15 @@ class ApiClient {
         body,
         headers,
         redirect: "follow",
-        credentials: CREDENTIALS,
+        // For the hosted deployment we omit cookies on API requests as they are
+        // not needed for authentication this offers a performance increase.
+        // For self-hosted we include them to support a wide variety of
+        // authenticated proxies, e.g. Pomerium, Cloudflare Access etc.
+        credentials: options.credentials
+          ? options.credentials
+          : isCloudHosted
+          ? "omit"
+          : "same-origin",
         cache: "no-cache",
       });
     } catch (err) {
@@ -116,6 +129,7 @@ class ApiClient {
       }
     }
 
+    const timeEnd = window.performance.now();
     const success = response.status >= 200 && response.status < 300;
 
     if (options.download && success) {
@@ -139,15 +153,10 @@ class ApiClient {
 
     // Handle failed responses
     const error: {
-      statusCode?: number;
-      response?: Response;
       message?: string;
       error?: string;
       data?: Record<string, any>;
     } = {};
-
-    error.statusCode = response.status;
-    error.response = response;
 
     try {
       const parsed = await response.json();
@@ -184,13 +193,32 @@ class ApiClient {
       throw new ServiceUnavailableError(error.message);
     }
 
-    throw new RequestError(error.message);
+    if (response.status === 429) {
+      throw new RateLimitExceededError(
+        `Too many requests, try again in a minute.`
+      );
+    }
+
+    if (response.status === 502) {
+      throw new BadGatewayError(
+        `Request to ${urlToFetch} failed in ${timeEnd - timeStart}ms.`
+      );
+    }
+
+    const err = new RequestError(`Error ${response.status}`);
+    Logger.error("Request failed", err, {
+      ...error,
+      url: urlToFetch,
+    });
+
+    // Still need to throw to trigger retry
+    throw err;
   };
 
   get = (
     path: string,
     data: Record<string, any> | undefined,
-    options?: Record<string, any>
+    options?: FetchOptions
   ) => {
     return this.fetch(path, "GET", data, options);
   };
@@ -198,20 +226,10 @@ class ApiClient {
   post = (
     path: string,
     data?: Record<string, any> | undefined,
-    options?: Record<string, any>
+    options?: FetchOptions
   ) => {
     return this.fetch(path, "POST", data, options);
   };
-
-  // Helpers
-  constructQueryString = (data: Record<string, any>) => {
-    return map(
-      data,
-      (v, k) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`
-    ).join("&");
-  };
 }
-
-export default ApiClient; // In case you don't want to always initiate, just import with `import { client } ...`
 
 export const client = new ApiClient();

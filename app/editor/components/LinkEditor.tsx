@@ -11,10 +11,10 @@ import { setTextSelection } from "prosemirror-utils";
 import { EditorView } from "prosemirror-view";
 import * as React from "react";
 import styled from "styled-components";
-import isUrl from "@shared/editor/lib/isUrl";
-import { isInternalUrl } from "@shared/utils/urls";
+import { isInternalUrl, sanitizeUrl } from "@shared/utils/urls";
 import Flex from "~/components/Flex";
 import { Dictionary } from "~/hooks/useDictionary";
+import { ToastOptions } from "~/types";
 import Input from "./Input";
 import LinkSearchResult from "./LinkSearchResult";
 import ToolbarButton from "./ToolbarButton";
@@ -44,7 +44,7 @@ type Props = {
     href: string,
     event: React.MouseEvent<HTMLButtonElement>
   ) => void;
-  onShowToast: (message: string, code: string) => void;
+  onShowToast: (message: string, options?: ToastOptions) => void;
   view: EditorView;
 };
 
@@ -70,18 +70,21 @@ class LinkEditor extends React.Component<Props, State> {
   };
 
   get href(): string {
-    return this.props.mark ? this.props.mark.attrs.href : "";
+    return sanitizeUrl(this.props.mark?.attrs.href) ?? "";
   }
 
-  get suggestedLinkTitle(): string {
+  get selectedText(): string {
     const { state } = this.props.view;
-    const { value } = this.state;
     const selectionText = state.doc.cut(
       state.selection.from,
       state.selection.to
     ).textContent;
 
-    return value.trim() || selectionText.trim();
+    return selectionText.trim();
+  }
+
+  get suggestedLinkTitle(): string {
+    return this.state.value.trim() || this.selectedText;
   }
 
   componentWillUnmount = () => {
@@ -113,17 +116,7 @@ class LinkEditor extends React.Component<Props, State> {
 
     this.discardInputValue = true;
     const { from, to } = this.props;
-
-    // Make sure a protocol is added to the beginning of the input if it's
-    // likely an absolute URL that was entered without one.
-    if (
-      !isUrl(href) &&
-      !href.startsWith("/") &&
-      !href.startsWith("#") &&
-      !href.startsWith("mailto:")
-    ) {
-      href = `https://${href}`;
-    }
+    href = sanitizeUrl(href) ?? "";
 
     this.props.onSelectLink({ href, title, from, to });
   };
@@ -205,7 +198,7 @@ class LinkEditor extends React.Component<Props, State> {
     this.setState({ selectedIndex });
   };
 
-  handleChange = async (
+  handleSearch = async (
     event: React.ChangeEvent<HTMLInputElement>
   ): Promise<void> => {
     const value = event.target.value;
@@ -215,7 +208,7 @@ class LinkEditor extends React.Component<Props, State> {
       selectedIndex: -1,
     });
 
-    const trimmedValue = value.trim();
+    const trimmedValue = value.trim() || this.selectedText;
 
     if (trimmedValue && this.props.onSearchLink) {
       try {
@@ -239,7 +232,12 @@ class LinkEditor extends React.Component<Props, State> {
 
   handleOpenLink = (event: React.MouseEvent<HTMLButtonElement>): void => {
     event.preventDefault();
-    this.props.onClickLink(this.href, event);
+
+    try {
+      this.props.onClickLink(this.href, event);
+    } catch (err) {
+      this.props.onShowToast(this.props.dictionary.openLinkError);
+    }
   };
 
   handleCreateLink = async (value: string) => {
@@ -323,7 +321,8 @@ class LinkEditor extends React.Component<Props, State> {
           }
           onKeyDown={this.handleKeyDown}
           onPaste={this.handlePaste}
-          onChange={this.handleChange}
+          onChange={this.handleSearch}
+          onFocus={this.handleSearch}
           autoFocus={this.href === ""}
         />
 

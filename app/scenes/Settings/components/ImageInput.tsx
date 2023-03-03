@@ -1,44 +1,36 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
+import Avatar, { IAvatar } from "~/components/Avatar/Avatar";
 import Flex from "~/components/Flex";
-import { LabelText } from "~/components/Input";
 import ImageUpload, { Props as ImageUploadProps } from "./ImageUpload";
 
 type Props = ImageUploadProps & {
-  label: string;
-  src?: string;
+  model: IAvatar;
 };
 
-export default function ImageInput({ label, src, ...rest }: Props) {
+export default function ImageInput({ model, ...rest }: Props) {
   const { t } = useTranslation();
 
   return (
-    <InputWrapper column>
-      <LabelText>{label}</LabelText>
-      <ImageBox>
-        <ImageUpload {...rest}>
-          <Avatar src={src} />
-          <Flex auto align="center" justify="center">
-            {t("Upload")}
-          </Flex>
-        </ImageUpload>
-      </ImageBox>
-    </InputWrapper>
+    <ImageBox>
+      <ImageUpload {...rest}>
+        <StyledAvatar model={model} size={64} />
+        <Flex auto align="center" justify="center" className="upload">
+          {t("Upload")}
+        </Flex>
+      </ImageUpload>
+    </ImageBox>
   );
 }
 
-const InputWrapper = styled(Flex)`
-  margin-bottom: 24px;
-`;
-
 const avatarStyles = `
-  width: 80px;
-  height: 80px;
+  width: 64px;
+  height: 64px;
 `;
 
-const Avatar = styled.img`
-  ${avatarStyles};
+const StyledAvatar = styled(Avatar)`
+  border-radius: 8px;
 `;
 
 const ImageBox = styled(Flex)`
@@ -50,7 +42,7 @@ const ImageBox = styled(Flex)`
   background: ${(props) => props.theme.background};
   overflow: hidden;
 
-  div div {
+  .upload {
     ${avatarStyles};
     position: absolute;
     top: 0;
@@ -58,11 +50,11 @@ const ImageBox = styled(Flex)`
     bottom: 0;
     left: 0;
     opacity: 0;
-    cursor: pointer;
+    cursor: var(--pointer);
     transition: all 250ms;
   }
 
-  &:hover div {
+  &:hover .upload {
     opacity: 1;
     background: rgba(0, 0, 0, 0.75);
     color: ${(props) => props.theme.white};

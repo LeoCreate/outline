@@ -4,7 +4,7 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { usePopoverState, PopoverDisclosure } from "reakit/Popover";
 import Document from "~/models/Document";
-import { AvatarWithPresence } from "~/components/Avatar";
+import AvatarWithPresence from "~/components/Avatar/AvatarWithPresence";
 import DocumentViews from "~/components/DocumentViews";
 import Facepile from "~/components/Facepile";
 import NudeButton from "~/components/NudeButton";
@@ -42,8 +42,9 @@ function Collaborators(props: Props) {
         filter(
           users.orderedData,
           (user) =>
-            presentIds.includes(user.id) ||
-            document.collaboratorIds.includes(user.id)
+            (presentIds.includes(user.id) ||
+              document.collaboratorIds.includes(user.id)) &&
+            !user.isSuspended
         ),
         (user) => presentIds.includes(user.id)
       ),
@@ -52,18 +53,14 @@ function Collaborators(props: Props) {
 
   // load any users we don't yet have in memory
   React.useEffect(() => {
-    const userIdsToFetch = uniq([
-      ...document.collaboratorIds,
-      ...presentIds,
-    ]).filter((userId) => !users.get(userId));
+    const ids = uniq([...document.collaboratorIds, ...presentIds])
+      .filter((userId) => !users.get(userId))
+      .sort();
 
-    if (!isEqual(requestedUserIds, userIdsToFetch)) {
-      setRequestedUserIds(userIdsToFetch);
+    if (!isEqual(requestedUserIds, ids) && ids.length > 0) {
+      setRequestedUserIds(ids);
+      users.fetchPage({ ids, limit: 100 });
     }
-
-    userIdsToFetch
-      .filter((userId) => requestedUserIds.includes(userId))
-      .forEach((userId) => users.fetch(userId));
   }, [document, users, presentIds, document.collaboratorIds, requestedUserIds]);
 
   const popover = usePopoverState({
@@ -93,7 +90,6 @@ function Collaborators(props: Props) {
                     isEditing={isEditing}
                     isObserving={isObserving}
                     isCurrentUser={currentUserId === collaborator.id}
-                    profileOnClick={false}
                     onClick={
                       isObservable
                         ? (ev) => {

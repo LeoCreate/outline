@@ -1,4 +1,4 @@
-import { NavigationNode } from "~/types";
+import { NavigationNode } from "@shared/types";
 import naturalSort from "./naturalSort";
 
 type Sort = {
@@ -8,7 +8,8 @@ type Sort = {
 
 export const sortNavigationNodes = (
   documents: NavigationNode[],
-  sort: Sort
+  sort: Sort,
+  sortChildren = true
 ): NavigationNode[] => {
   // "index" field is manually sorted and is represented by the documentStructure
   // already saved in the database, no further sort is needed
@@ -22,6 +23,21 @@ export const sortNavigationNodes = (
 
   return orderedDocs.map((document) => ({
     ...document,
-    children: sortNavigationNodes(document.children, sort),
+    children: sortChildren
+      ? sortNavigationNodes(document.children, sort, sortChildren)
+      : document.children,
   }));
 };
+
+export const colorPalette = [
+  "#4E5C6E",
+  "#0366d6",
+  "#9E5CF7",
+  "#FF825C",
+  "#FF5C80",
+  "#FFBE0B",
+  "#42DED1",
+  "#00D084",
+  "#FF4DFA",
+  "#2F362F",
+];

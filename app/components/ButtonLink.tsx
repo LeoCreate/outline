@@ -1,18 +1,6 @@
-import * as React from "react";
 import styled from "styled-components";
 
-type Props = {
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
-  children: React.ReactNode;
-};
-
-const ButtonLink = React.forwardRef(
-  (props: Props, ref: React.Ref<HTMLButtonElement>) => {
-    return <Button {...props} ref={ref} />;
-  }
-);
-
-const Button = styled.button`
+const ButtonLink = styled.button`
   margin: 0;
   padding: 0;
   border: 0;

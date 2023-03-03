@@ -3,6 +3,7 @@ import { PlusIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { CompositeStateReturn, CompositeItem } from "reakit/Composite";
 import styled, { css } from "styled-components";
 import breakpoint from "styled-components-breakpoint";
 import Document from "~/models/Document";
@@ -33,7 +34,8 @@ type Props = {
   showPin?: boolean;
   showDraft?: boolean;
   showTemplate?: boolean;
-};
+} & CompositeStateReturn;
+
 const SEARCH_RESULT_REGEX = /<b\b[^>]*>(.*?)<\/b>/gi;
 
 function replaceResultMarks(tag: string) {
@@ -47,8 +49,8 @@ function DocumentListItem(
   ref: React.RefObject<HTMLAnchorElement>
 ) {
   const { t } = useTranslation();
-  const currentUser = useCurrentUser();
-  const currentTeam = useCurrentTeam();
+  const user = useCurrentUser();
+  const team = useCurrentTeam();
   const [menuOpen, handleMenuOpen, handleMenuClose] = useBoolean();
 
   const {
@@ -61,19 +63,22 @@ function DocumentListItem(
     showTemplate,
     highlight,
     context,
+    ...rest
   } = props;
   const queryIsInTitle =
     !!highlight &&
     !!document.title.toLowerCase().includes(highlight.toLowerCase());
   const canStar =
     !document.isDraft && !document.isArchived && !document.isTemplate;
-  const can = usePolicy(currentTeam.id);
+  const can = usePolicy(team);
   const canCollection = usePolicy(document.collectionId);
 
   return (
-    <DocumentLink
+    <CompositeItem
+      as={DocumentLink}
       ref={ref}
       dir={document.dir}
+      role="menuitem"
       $isStarred={document.isStarred}
       $menuOpen={menuOpen}
       to={{
@@ -82,6 +87,7 @@ function DocumentListItem(
           title: document.titleWithDefault,
         },
       }}
+      {...rest}
     >
       <Content>
         <Heading dir={document.dir}>
@@ -90,7 +96,7 @@ function DocumentListItem(
             highlight={highlight}
             dir={document.dir}
           />
-          {document.isBadgedNew && document.createdBy.id !== currentUser.id && (
+          {document.isBadgedNew && document.createdBy.id !== user.id && (
             <Badge yellow>{t("New")}</Badge>
           )}
           {canStar && (
@@ -155,7 +161,7 @@ function DocumentListItem(
           modal={false}
         />
       </Actions>
-    </DocumentLink>
+    </CompositeItem>
   );
 }
 
@@ -195,6 +201,11 @@ const DocumentLink = styled(Link)<{
   border-radius: 8px;
   max-height: 50vh;
   width: calc(100vw - 8px);
+  cursor: var(--pointer);
+
+  &:focus-visible {
+    outline: none;
+  }
 
   ${breakpoint("tablet")`
     width: auto;

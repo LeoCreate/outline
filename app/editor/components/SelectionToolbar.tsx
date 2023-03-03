@@ -12,6 +12,7 @@ import getRowIndex from "@shared/editor/queries/getRowIndex";
 import isMarkActive from "@shared/editor/queries/isMarkActive";
 import isNodeActive from "@shared/editor/queries/isNodeActive";
 import { MenuItem } from "@shared/editor/types";
+import { creatingUrlPrefix } from "@shared/utils/urls";
 import { Dictionary } from "~/hooks/useDictionary";
 import getDividerMenuItems from "../menus/divider";
 import getFormattingMenuItems from "../menus/formatting";
@@ -36,13 +37,13 @@ type Props = {
     event: MouseEvent | React.MouseEvent<HTMLButtonElement>
   ) => void;
   onCreateLink?: (title: string) => Promise<string>;
-  onShowToast: (msg: string, code: string) => void;
+  onShowToast: (message: string) => void;
   view: EditorView;
 };
 
 function isVisible(props: Props) {
   const { view } = props;
-  const { selection } = view.state;
+  const { selection, doc } = view.state;
 
   if (isMarkActive(view.state.schema.marks.link)(view.state)) {
     return true;
@@ -60,6 +61,11 @@ function isVisible(props: Props) {
     return true;
   }
   if (selection instanceof NodeSelection) {
+    return false;
+  }
+
+  const selectionText = doc.cut(selection.from, selection.to).textContent;
+  if (selection instanceof TextSelection && !selectionText) {
     return false;
   }
 
@@ -103,7 +109,7 @@ export default class SelectionToolbar extends React.Component<Props> {
       return;
     }
 
-    if (!this.isActive) {
+    if (!this.isActive || document.activeElement?.tagName === "INPUT") {
       return;
     }
 
@@ -133,7 +139,7 @@ export default class SelectionToolbar extends React.Component<Props> {
       return;
     }
 
-    const href = `creating#${title}…`;
+    const href = `${creatingUrlPrefix}${title}…`;
     const markType = state.schema.marks.link;
 
     // Insert a placeholder link
@@ -191,9 +197,7 @@ export default class SelectionToolbar extends React.Component<Props> {
     const isTableSelection = colIndex !== undefined && rowIndex !== undefined;
     const link = isMarkActive(state.schema.marks.link)(state);
     const range = getMarkRange(selection.$from, state.schema.marks.link);
-    const isImageSelection =
-      selection.node && selection.node.type.name === "image";
-    let isTextSelection = false;
+    const isImageSelection = selection.node?.type?.name === "image";
 
     let items: MenuItem[] = [];
     if (isTableSelection) {
@@ -208,7 +212,6 @@ export default class SelectionToolbar extends React.Component<Props> {
       items = getDividerMenuItems(state, dictionary);
     } else {
       items = getFormattingMenuItems(state, isTemplate, dictionary);
-      isTextSelection = true;
     }
 
     // Some extensions may be disabled, remove corresponding items
@@ -227,23 +230,11 @@ export default class SelectionToolbar extends React.Component<Props> {
       return null;
     }
 
-    const selectionText = state.doc.cut(
-      state.selection.from,
-      state.selection.to
-    ).textContent;
-
-    if (isTextSelection && !selectionText && !link) {
-      return null;
-    }
-
     return (
-      <FloatingToolbar
-        view={view}
-        active={isVisible(this.props)}
-        ref={this.menuRef}
-      >
+      <FloatingToolbar active={isVisible(this.props)} ref={this.menuRef}>
         {link && range ? (
           <LinkEditor
+            key={`${range.from}-${range.to}`}
             dictionary={dictionary}
             mark={range.mark}
             from={range.from}

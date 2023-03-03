@@ -2,29 +2,16 @@ import { observer } from "mobx-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import styled from "styled-components";
-import { $Diff } from "utility-types";
 import User from "~/models/User";
 import Avatar from "~/components/Avatar";
 import Badge from "~/components/Badge";
 import Flex from "~/components/Flex";
-import { Props as TableProps } from "~/components/Table";
+import TableFromParams from "~/components/TableFromParams";
 import Time from "~/components/Time";
 import useCurrentUser from "~/hooks/useCurrentUser";
 import UserMenu from "~/menus/UserMenu";
 
-const Table = React.lazy(
-  () =>
-    import(
-      /* webpackChunkName: "table" */
-      "~/components/Table"
-    )
-);
-type Props = $Diff<
-  TableProps,
-  {
-    columns: any;
-  }
-> & {
+type Props = Omit<React.ComponentProps<typeof TableFromParams>, "columns"> & {
   data: User[];
   canManage: boolean;
 };
@@ -42,7 +29,7 @@ function PeopleTable({ canManage, ...rest }: Props) {
           Cell: observer(
             ({ value, row }: { value: string; row: { original: User } }) => (
               <Flex align="center" gap={8}>
-                <Avatar src={row.original.avatarUrl} size={32} /> {value}{" "}
+                <Avatar model={row.original} size={32} /> {value}{" "}
                 {currentUser.id === row.original.id && `(${t("You")})`}
               </Flex>
             )
@@ -82,6 +69,7 @@ function PeopleTable({ canManage, ...rest }: Props) {
               Header: " ",
               accessor: "id",
               className: "actions",
+              disableSortBy: true,
               Cell: observer(
                 ({ row, value }: { value: string; row: { original: User } }) =>
                   currentUser.id !== value ? (
@@ -94,11 +82,11 @@ function PeopleTable({ canManage, ...rest }: Props) {
     [t, canManage, currentUser]
   );
 
-  return <Table columns={columns} {...rest} />;
+  return <TableFromParams columns={columns} {...rest} />;
 }
 
 const Badges = styled.div`
   margin-left: -10px;
 `;
 
-export default PeopleTable;
+export default observer(PeopleTable);

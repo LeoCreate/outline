@@ -1,16 +1,17 @@
 import { NodeSelection } from "prosemirror-state";
 import { CellSelection } from "prosemirror-tables";
-import { EditorView } from "prosemirror-view";
 import * as React from "react";
-import { Portal } from "react-portal";
 import styled from "styled-components";
+import { depths } from "@shared/styles";
+import { Portal } from "~/components/Portal";
 import useComponentSize from "~/hooks/useComponentSize";
+import useEventListener from "~/hooks/useEventListener";
 import useMediaQuery from "~/hooks/useMediaQuery";
 import useViewportHeight from "~/hooks/useViewportHeight";
+import { useEditor } from "./EditorContext";
 
 type Props = {
   active?: boolean;
-  view: EditorView;
   children: React.ReactNode;
   forwardedRef?: React.RefObject<HTMLDivElement> | null;
 };
@@ -25,13 +26,13 @@ const defaultPosition = {
 function usePosition({
   menuRef,
   isSelectingText,
-  props,
+  active,
 }: {
   menuRef: React.RefObject<HTMLDivElement>;
   isSelectingText: boolean;
-  props: Props;
+  active?: boolean;
 }) {
-  const { view, active } = props;
+  const { view } = useEditor();
   const { selection } = view.state;
   const { width: menuWidth, height: menuHeight } = useComponentSize(menuRef);
   const viewportHeight = useViewportHeight();
@@ -79,6 +80,15 @@ function usePosition({
     right: Math.max(fromPos.right, toPos.right),
   };
 
+  const offsetParent = menuRef.current.offsetParent
+    ? menuRef.current.offsetParent.getBoundingClientRect()
+    : ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+        top: 0,
+        left: 0,
+      } as DOMRect);
+
   // tables are an oddity, and need their own positioning logic
   const isColSelection =
     selection instanceof CellSelection &&
@@ -115,8 +125,8 @@ function usePosition({
     const { left, top, width } = imageElement.getBoundingClientRect();
 
     return {
-      left: Math.round(left + width / 2 + window.scrollX - menuWidth / 2),
-      top: Math.round(top + window.scrollY - menuHeight),
+      left: Math.round(left + width / 2 - menuWidth / 2 - offsetParent.left),
+      top: Math.round(top - menuHeight - offsetParent.top),
       offset: 0,
       visible: true,
     };
@@ -131,8 +141,8 @@ function usePosition({
     // instances leave a margin
     const margin = 12;
     const left = Math.min(
-      window.innerWidth - menuWidth - margin,
-      Math.max(margin, centerOfSelection - menuWidth / 2)
+      offsetParent.x + offsetParent.width - menuWidth - margin,
+      Math.max(offsetParent.x + margin, centerOfSelection - menuWidth / 2)
     );
     const top = Math.min(
       window.innerHeight - menuHeight - margin,
@@ -144,8 +154,8 @@ function usePosition({
     // of the selection still
     const offset = left - (centerOfSelection - menuWidth / 2);
     return {
-      left: Math.round(left + window.scrollX),
-      top: Math.round(top + window.scrollY),
+      left: Math.round(left - offsetParent.left),
+      top: Math.round(top - offsetParent.top),
       offset: Math.round(offset),
       visible: true,
     };
@@ -153,35 +163,25 @@ function usePosition({
 }
 
 const FloatingToolbar = React.forwardRef(
-  (props: Props, forwardedRef: React.RefObject<HTMLDivElement>) => {
-    const menuRef = forwardedRef || React.createRef<HTMLDivElement>();
+  (props: Props, ref: React.RefObject<HTMLDivElement>) => {
+    const menuRef = ref || React.createRef<HTMLDivElement>();
     const [isSelectingText, setSelectingText] = React.useState(false);
 
     const position = usePosition({
       menuRef,
       isSelectingText,
-      props,
+      active: props.active,
     });
 
-    React.useEffect(() => {
-      const handleMouseDown = () => {
-        if (!props.active) {
-          setSelectingText(true);
-        }
-      };
+    useEventListener("mouseup", () => {
+      setSelectingText(false);
+    });
 
-      const handleMouseUp = () => {
-        setSelectingText(false);
-      };
-
-      window.addEventListener("mousedown", handleMouseDown);
-      window.addEventListener("mouseup", handleMouseUp);
-
-      return () => {
-        window.removeEventListener("mousedown", handleMouseDown);
-        window.removeEventListener("mouseup", handleMouseUp);
-      };
-    }, [props.active]);
+    useEventListener("mousedown", () => {
+      if (!props.active) {
+        setSelectingText(true);
+      }
+    });
 
     return (
       <Portal>
@@ -208,7 +208,7 @@ const Wrapper = styled.div<{
   will-change: opacity, transform;
   padding: 8px 16px;
   position: absolute;
-  z-index: ${(props) => props.theme.zIndex + 100};
+  z-index: ${depths.editorToolbar};
   opacity: 0;
   background-color: ${(props) => props.theme.toolbarBackground};
   border-radius: 4px;

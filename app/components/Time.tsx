@@ -1,17 +1,13 @@
 import { formatDistanceToNow } from "date-fns";
 import * as React from "react";
 
-const LocaleTime = React.lazy(
-  () =>
-    import(
-      /* webpackChunkName: "locale-time" */
-      "~/components/LocaleTime"
-    )
-);
+const LocaleTime = React.lazy(() => import("~/components/LocaleTime"));
 
-type Props = React.ComponentProps<typeof LocaleTime>;
+type Props = React.ComponentProps<typeof LocaleTime> & {
+  onClick?: () => void;
+};
 
-function Time(props: Props) {
+function Time({ onClick, ...props }: Props) {
   let content = formatDistanceToNow(Date.parse(props.dateTime), {
     addSuffix: props.addSuffix,
   });
@@ -24,13 +20,15 @@ function Time(props: Props) {
   }
 
   return (
-    <React.Suspense
-      fallback={
-        <time dateTime={props.dateTime}>{props.children || content}</time>
-      }
-    >
-      <LocaleTime tooltipDelay={250} {...props} />
-    </React.Suspense>
+    <span onClick={onClick}>
+      <React.Suspense
+        fallback={
+          <time dateTime={props.dateTime}>{props.children || content}</time>
+        }
+      >
+        <LocaleTime tooltipDelay={250} {...props} />
+      </React.Suspense>
+    </span>
   );
 }
 

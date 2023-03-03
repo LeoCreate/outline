@@ -1,5 +1,6 @@
 import invariant from "invariant";
 import { some } from "lodash";
+import { CollectionPermission } from "@shared/types";
 import { Collection, User, Team } from "@server/models";
 import { AdminRequiredError } from "../errors";
 import { allow } from "./cancan";
@@ -8,7 +9,10 @@ allow(User, "createCollection", Team, (user, team) => {
   if (!team || user.isViewer || user.teamId !== team.id) {
     return false;
   }
-  return true;
+  if (user.isAdmin || team.memberCollectionCreate) {
+    return true;
+  }
+  return false;
 });
 
 allow(User, "importCollection", Team, (actor, team) => {
@@ -36,9 +40,12 @@ allow(User, "move", Collection, (user, collection) => {
   throw AdminRequiredError();
 });
 
-allow(User, "read", Collection, (user, collection) => {
+allow(User, ["read", "star", "unstar"], Collection, (user, collection) => {
   if (!collection || user.teamId !== collection.teamId) {
     return false;
+  }
+  if (user.isAdmin) {
+    return true;
   }
 
   if (!collection.permission) {
@@ -51,7 +58,7 @@ allow(User, "read", Collection, (user, collection) => {
       ...collection.collectionGroupMemberships,
     ];
     return some(allMemberships, (m) =>
-      ["read", "read_write", "maintainer"].includes(m.permission)
+      Object.values(CollectionPermission).includes(m.permission)
     );
   }
 
@@ -59,17 +66,20 @@ allow(User, "read", Collection, (user, collection) => {
 });
 
 allow(User, "share", Collection, (user, collection) => {
-  if (user.isViewer) {
-    return false;
-  }
   if (!collection || user.teamId !== collection.teamId) {
     return false;
   }
   if (!collection.sharing) {
     return false;
   }
+  if (user.isAdmin) {
+    return true;
+  }
 
-  if (collection.permission !== "read_write") {
+  if (
+    collection.permission !== CollectionPermission.ReadWrite ||
+    user.isViewer
+  ) {
     invariant(
       collection.memberships,
       "membership should be preloaded, did you forget withMembership scope?"
@@ -78,8 +88,9 @@ allow(User, "share", Collection, (user, collection) => {
       ...collection.memberships,
       ...collection.collectionGroupMemberships,
     ];
-    return some(allMemberships, (m) =>
-      ["read_write", "maintainer"].includes(m.permission)
+    return some(
+      allMemberships,
+      (m) => m.permission === CollectionPermission.ReadWrite
     );
   }
 
@@ -87,14 +98,17 @@ allow(User, "share", Collection, (user, collection) => {
 });
 
 allow(User, ["publish", "update"], Collection, (user, collection) => {
-  if (user.isViewer) {
-    return false;
-  }
   if (!collection || user.teamId !== collection.teamId) {
     return false;
   }
+  if (user.isAdmin) {
+    return true;
+  }
 
-  if (collection.permission !== "read_write") {
+  if (
+    collection.permission !== CollectionPermission.ReadWrite ||
+    user.isViewer
+  ) {
     invariant(
       collection.memberships,
       "membership should be preloaded, did you forget withMembership scope?"
@@ -103,8 +117,9 @@ allow(User, ["publish", "update"], Collection, (user, collection) => {
       ...collection.memberships,
       ...collection.collectionGroupMemberships,
     ];
-    return some(allMemberships, (m) =>
-      ["read_write", "maintainer"].includes(m.permission)
+    return some(
+      allMemberships,
+      (m) => m.permission === CollectionPermission.ReadWrite
     );
   }
 
@@ -112,14 +127,17 @@ allow(User, ["publish", "update"], Collection, (user, collection) => {
 });
 
 allow(User, "delete", Collection, (user, collection) => {
-  if (user.isViewer) {
-    return false;
-  }
   if (!collection || user.teamId !== collection.teamId) {
     return false;
   }
+  if (user.isAdmin) {
+    return true;
+  }
 
-  if (collection.permission !== "read_write") {
+  if (
+    collection.permission !== CollectionPermission.ReadWrite ||
+    user.isViewer
+  ) {
     invariant(
       collection.memberships,
       "membership should be preloaded, did you forget withMembership scope?"
@@ -128,14 +146,12 @@ allow(User, "delete", Collection, (user, collection) => {
       ...collection.memberships,
       ...collection.collectionGroupMemberships,
     ];
-    return some(allMemberships, (m) =>
-      ["read_write", "maintainer"].includes(m.permission)
+    return some(
+      allMemberships,
+      (m) => m.permission === CollectionPermission.ReadWrite
     );
   }
 
-  if (user.isAdmin) {
-    return true;
-  }
   if (user.id === collection.createdById) {
     return true;
   }

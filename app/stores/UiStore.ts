@@ -1,10 +1,13 @@
 import { action, autorun, computed, observable } from "mobx";
-import { light as defaultTheme } from "@shared/theme";
-import Collection from "~/models/Collection";
+import { light as defaultTheme } from "@shared/styles/theme";
+import Storage from "@shared/utils/Storage";
 import Document from "~/models/Document";
-import { ConnectionStatus } from "~/scenes/Document/components/MultiplayerEditor";
+import type { ConnectionStatus } from "~/scenes/Document/components/MultiplayerEditor";
 
 const UI_STORE = "UI_STORE";
+
+// Whether the window launched with sidebar force hidden
+let sidebarHidden = window.location.search.includes("sidebarHidden=true");
 
 export enum Theme {
   Light = "light",
@@ -46,9 +49,6 @@ class UiStore {
   progressBarVisible = false;
 
   @observable
-  isEditing = false;
-
-  @observable
   tocVisible = false;
 
   @observable
@@ -58,7 +58,13 @@ class UiStore {
   sidebarWidth: number;
 
   @observable
+  sidebarRightWidth: number;
+
+  @observable
   sidebarCollapsed = false;
+
+  @observable
+  commentsCollapsed = false;
 
   @observable
   sidebarIsResizing = false;
@@ -68,13 +74,7 @@ class UiStore {
 
   constructor() {
     // Rehydrate
-    let data: Partial<UiStore> = {};
-
-    try {
-      data = JSON.parse(localStorage.getItem(UI_STORE) || "{}");
-    } catch (_) {
-      // no-op Safari private mode
-    }
+    const data: Partial<UiStore> = Storage.get(UI_STORE) || {};
 
     // system theme listeners
     if (window.matchMedia) {
@@ -97,25 +97,20 @@ class UiStore {
     this.languagePromptDismissed = data.languagePromptDismissed;
     this.sidebarCollapsed = !!data.sidebarCollapsed;
     this.sidebarWidth = data.sidebarWidth || defaultTheme.sidebarWidth;
+    this.sidebarRightWidth =
+      data.sidebarRightWidth || defaultTheme.sidebarWidth;
     this.tocVisible = !!data.tocVisible;
     this.theme = data.theme || Theme.System;
 
     autorun(() => {
-      try {
-        localStorage.setItem(UI_STORE, this.asJson);
-      } catch (_) {
-        // no-op Safari private mode
-      }
+      Storage.set(UI_STORE, this.asJson);
     });
   }
 
   @action
   setTheme = (theme: Theme) => {
     this.theme = theme;
-
-    if (window.localStorage) {
-      window.localStorage.setItem("theme", this.theme);
-    }
+    Storage.set("theme", this.theme);
   };
 
   @action
@@ -150,8 +145,8 @@ class UiStore {
   };
 
   @action
-  setActiveCollection = (collection: Collection): void => {
-    this.activeCollectionId = collection.id;
+  setActiveCollection = (collectionId: string | undefined): void => {
+    this.activeCollectionId = collectionId;
   };
 
   @action
@@ -166,8 +161,8 @@ class UiStore {
   };
 
   @action
-  setSidebarWidth = (sidebarWidth: number): void => {
-    this.sidebarWidth = sidebarWidth;
+  setSidebarWidth = (width: number): void => {
+    this.sidebarWidth = width;
   };
 
   @action
@@ -177,11 +172,28 @@ class UiStore {
 
   @action
   expandSidebar = () => {
+    sidebarHidden = false;
     this.sidebarCollapsed = false;
   };
 
   @action
+  collapseComments = () => {
+    this.commentsCollapsed = true;
+  };
+
+  @action
+  expandComments = () => {
+    this.commentsCollapsed = false;
+  };
+
+  @action
+  toggleComments = () => {
+    this.commentsCollapsed = !this.commentsCollapsed;
+  };
+
+  @action
   toggleCollapsedSidebar = () => {
+    sidebarHidden = false;
     this.sidebarCollapsed = !this.sidebarCollapsed;
   };
 
@@ -193,16 +205,6 @@ class UiStore {
   @action
   hideTableOfContents = () => {
     this.tocVisible = false;
-  };
-
-  @action
-  enableEditMode = () => {
-    this.isEditing = true;
-  };
-
-  @action
-  disableEditMode = () => {
-    this.isEditing = false;
   };
 
   @action
@@ -235,6 +237,16 @@ class UiStore {
     this.mobileSidebarVisible = false;
   };
 
+  /**
+   * Returns the current state of the sidebar taking into account user preference
+   * and whether the sidebar has been hidden as part of launching in a new
+   * desktop window.
+   */
+  @computed
+  get sidebarIsClosed() {
+    return this.sidebarCollapsed || sidebarHidden;
+  }
+
   @computed
   get resolvedTheme(): Theme | SystemTheme {
     if (this.theme === "system") {
@@ -245,14 +257,15 @@ class UiStore {
   }
 
   @computed
-  get asJson(): string {
-    return JSON.stringify({
+  get asJson() {
+    return {
       tocVisible: this.tocVisible,
       sidebarCollapsed: this.sidebarCollapsed,
       sidebarWidth: this.sidebarWidth,
+      sidebarRightWidth: this.sidebarRightWidth,
       languagePromptDismissed: this.languagePromptDismissed,
       theme: this.theme,
-    });
+    };
   }
 }
 

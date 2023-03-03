@@ -1,58 +1,52 @@
 import { observer } from "mobx-react";
-import {
-  EditIcon,
-  StarredIcon,
-  UnstarredIcon,
-  DuplicateIcon,
-  ArchiveIcon,
-  TrashIcon,
-  MoveIcon,
-  HistoryIcon,
-  UnpublishIcon,
-  ShapesIcon,
-  PrintIcon,
-  ImportIcon,
-  NewDocumentIcon,
-  DownloadIcon,
-  BuildingBlocksIcon,
-  RestoreIcon,
-  CrossIcon,
-} from "outline-icons";
+import { EditIcon, NewDocumentIcon, RestoreIcon } from "outline-icons";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory } from "react-router-dom";
-import { useMenuState, MenuButton } from "reakit/Menu";
+import { useMenuState, MenuButton, MenuButtonHTMLProps } from "reakit/Menu";
 import { VisuallyHidden } from "reakit/VisuallyHidden";
 import styled from "styled-components";
 import breakpoint from "styled-components-breakpoint";
-import getDataTransferFiles from "@shared/utils/getDataTransferFiles";
+import { getEventFiles } from "@shared/utils/files";
 import Document from "~/models/Document";
-import DocumentDelete from "~/scenes/DocumentDelete";
-import DocumentMove from "~/scenes/DocumentMove";
-import DocumentPermanentDelete from "~/scenes/DocumentPermanentDelete";
-import DocumentTemplatize from "~/scenes/DocumentTemplatize";
-import CollectionIcon from "~/components/CollectionIcon";
 import ContextMenu from "~/components/ContextMenu";
 import OverflowMenuButton from "~/components/ContextMenu/OverflowMenuButton";
 import Separator from "~/components/ContextMenu/Separator";
 import Template from "~/components/ContextMenu/Template";
 import Flex from "~/components/Flex";
-import Modal from "~/components/Modal";
+import CollectionIcon from "~/components/Icons/CollectionIcon";
 import Switch from "~/components/Switch";
 import { actionToMenuItem } from "~/actions";
-import { pinDocument } from "~/actions/definitions/documents";
+import {
+  pinDocument,
+  createTemplate,
+  subscribeDocument,
+  unsubscribeDocument,
+  moveDocument,
+  deleteDocument,
+  permanentlyDeleteDocument,
+  downloadDocument,
+  importDocument,
+  starDocument,
+  unstarDocument,
+  duplicateDocument,
+  archiveDocument,
+  openDocumentHistory,
+  openDocumentInsights,
+  publishDocument,
+  unpublishDocument,
+  printDocument,
+  openDocumentComments,
+} from "~/actions/definitions/documents";
 import useActionContext from "~/hooks/useActionContext";
 import useCurrentTeam from "~/hooks/useCurrentTeam";
+import useMobile from "~/hooks/useMobile";
 import usePolicy from "~/hooks/usePolicy";
+import useRequest from "~/hooks/useRequest";
 import useStores from "~/hooks/useStores";
 import useToasts from "~/hooks/useToasts";
 import { MenuItem } from "~/types";
-import {
-  documentHistoryUrl,
-  documentUrl,
-  editDocumentUrl,
-  newDocumentPath,
-} from "~/utils/routeHelpers";
+import { editDocumentUrl, newDocumentPath } from "~/utils/routeHelpers";
 
 type Props = {
   document: Document;
@@ -63,14 +57,13 @@ type Props = {
   modal?: boolean;
   showToggleEmbeds?: boolean;
   showPin?: boolean;
-  label?: (arg0: any) => React.ReactNode;
+  label?: (props: MenuButtonHTMLProps) => React.ReactNode;
   onOpen?: () => void;
   onClose?: () => void;
 };
 
 function DocumentMenu({
   document,
-  isRevision,
   className,
   modal = true,
   showToggleEmbeds,
@@ -80,7 +73,7 @@ function DocumentMenu({
   onClose,
 }: Props) {
   const team = useCurrentTeam();
-  const { policies, collections, documents } = useStores();
+  const { policies, collections, documents, subscriptions } = useStores();
   const { showToast } = useToasts();
   const menu = useMenuState({
     modal,
@@ -95,39 +88,24 @@ function DocumentMenu({
     activeCollectionId: document.collectionId,
   });
   const { t } = useTranslation();
-  const [renderModals, setRenderModals] = React.useState(false);
-  const [showDeleteModal, setShowDeleteModal] = React.useState(false);
-  const [
-    showPermanentDeleteModal,
-    setShowPermanentDeleteModal,
-  ] = React.useState(false);
-  const [showMoveModal, setShowMoveModal] = React.useState(false);
-  const [showTemplateModal, setShowTemplateModal] = React.useState(false);
+  const isMobile = useMobile();
   const file = React.useRef<HTMLInputElement>(null);
+  const { data, loading, request } = useRequest(() =>
+    subscriptions.fetchPage({
+      documentId: document.id,
+      event: "documents.update",
+    })
+  );
 
-  const handleOpen = React.useCallback(() => {
-    setRenderModals(true);
+  const handleOpen = React.useCallback(async () => {
+    if (!data && !loading) {
+      request();
+    }
 
     if (onOpen) {
       onOpen();
     }
-  }, [onOpen]);
-
-  const handleDuplicate = React.useCallback(async () => {
-    const duped = await document.duplicate();
-    // when duplicating, go straight to the duplicated document content
-    history.push(duped.url);
-    showToast(t("Document duplicated"), {
-      type: "success",
-    });
-  }, [t, history, showToast, document]);
-
-  const handleArchive = React.useCallback(async () => {
-    await document.archive();
-    showToast(t("Document archived"), {
-      type: "success",
-    });
-  }, [showToast, t, document]);
+  }, [data, loading, onOpen, request]);
 
   const handleRestore = React.useCallback(
     async (
@@ -144,39 +122,8 @@ function DocumentMenu({
     [showToast, t, document]
   );
 
-  const handleUnpublish = React.useCallback(async () => {
-    await document.unpublish();
-    showToast(t("Document unpublished"), {
-      type: "success",
-    });
-  }, [showToast, t, document]);
-
-  const handlePrint = React.useCallback(() => {
-    menu.hide();
-    window.print();
-  }, [menu]);
-
-  const handleStar = React.useCallback(
-    (ev: React.SyntheticEvent) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      document.star();
-    },
-    [document]
-  );
-
-  const handleUnstar = React.useCallback(
-    (ev: React.SyntheticEvent) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      document.unstar();
-    },
-    [document]
-  );
-
   const collection = collections.get(document.collectionId);
-  const can = usePolicy(document.id);
-  const canViewHistory = can.read && !can.restore;
+  const can = usePolicy(document);
   const restoreItems = React.useMemo(
     () => [
       ...collections.orderedData.reduce<MenuItem[]>((filtered, collection) => {
@@ -207,22 +154,9 @@ function DocumentMenu({
     ev.stopPropagation();
   }, []);
 
-  const handleImportDocument = React.useCallback(
-    (ev: React.SyntheticEvent) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-
-      // simulate a click on the file upload input element
-      if (file.current) {
-        file.current.click();
-      }
-    },
-    [file]
-  );
-
   const handleFilePicked = React.useCallback(
-    async (ev: React.FormEvent<HTMLInputElement>) => {
-      const files = getDataTransferFiles(ev);
+    async (ev: React.ChangeEvent<HTMLInputElement>) => {
+      const files = getEventFiles(ev);
 
       // Because this is the onChange handler it's possible for the change to be
       // from previously selecting a file to not selecting a file – aka empty
@@ -258,14 +192,17 @@ function DocumentMenu({
   return (
     <>
       <VisuallyHidden>
-        <input
-          type="file"
-          ref={file}
-          onChange={handleFilePicked}
-          onClick={stopPropagation}
-          accept={documents.importFileTypes.join(", ")}
-          tabIndex={-1}
-        />
+        <label>
+          {t("Import document")}
+          <input
+            type="file"
+            ref={file}
+            onChange={handleFilePicked}
+            onClick={stopPropagation}
+            accept={documents.importFileTypes.join(", ")}
+            tabIndex={-1}
+          />
+        </label>
       </VisuallyHidden>
       {label ? (
         <MenuButton {...menu}>{label}</MenuButton>
@@ -312,21 +249,10 @@ function DocumentMenu({
                 ...restoreItems,
               ],
             },
-            {
-              type: "button",
-              title: t("Unstar"),
-              onClick: handleUnstar,
-              visible: document.isStarred && !!can.unstar,
-              icon: <UnstarredIcon />,
-            },
-            {
-              type: "button",
-              title: t("Star"),
-              onClick: handleStar,
-              visible: !document.isStarred && !!can.star,
-              icon: <StarredIcon />,
-            },
-            actionToMenuItem(pinDocument, context),
+            actionToMenuItem(starDocument, context),
+            actionToMenuItem(unstarDocument, context),
+            actionToMenuItem(subscribeDocument, context),
+            actionToMenuItem(unsubscribeDocument, context),
             {
               type: "separator",
             },
@@ -334,7 +260,7 @@ function DocumentMenu({
               type: "route",
               title: t("Edit"),
               to: editDocumentUrl(document),
-              visible: !!can.update && !team.collaborativeEditing,
+              visible: !!can.update && !team.seamlessEditing,
               icon: <EditIcon />,
             },
             {
@@ -346,183 +272,64 @@ function DocumentMenu({
               visible: !!can.createChildDocument,
               icon: <NewDocumentIcon />,
             },
-            {
-              type: "button",
-              title: t("Import document"),
-              visible: can.createChildDocument,
-              onClick: handleImportDocument,
-              icon: <ImportIcon />,
-            },
-            {
-              type: "button",
-              title: `${t("Create template")}…`,
-              onClick: () => setShowTemplateModal(true),
-              visible:
-                !!can.update && !document.isTemplate && !document.isDraft,
-              icon: <ShapesIcon />,
-            },
-            {
-              type: "button",
-              title: t("Duplicate"),
-              onClick: handleDuplicate,
-              visible: !!can.update,
-              icon: <DuplicateIcon />,
-            },
-            {
-              type: "button",
-              title: t("Unpublish"),
-              onClick: handleUnpublish,
-              visible: !!can.unpublish,
-              icon: <UnpublishIcon />,
-            },
-            {
-              type: "button",
-              title: t("Archive"),
-              onClick: handleArchive,
-              visible: !!can.archive,
-              icon: <ArchiveIcon />,
-            },
-            {
-              type: "button",
-              title: `${t("Move")}…`,
-              onClick: () => setShowMoveModal(true),
-              visible: !!can.move,
-              icon: <MoveIcon />,
-            },
-            {
-              type: "button",
-              title: `${t("Delete")}…`,
-              dangerous: true,
-              onClick: () => setShowDeleteModal(true),
-              visible: !!can.delete,
-              icon: <TrashIcon />,
-            },
-            {
-              type: "button",
-              title: `${t("Permanently delete")}…`,
-              dangerous: true,
-              onClick: () => setShowPermanentDeleteModal(true),
-              visible: can.permanentDelete,
-              icon: <CrossIcon />,
-            },
-            {
-              type: "button",
-              title: t("Enable embeds"),
-              onClick: document.enableEmbeds,
-              visible: !!showToggleEmbeds && document.embedsDisabled,
-              icon: <BuildingBlocksIcon />,
-            },
-            {
-              type: "button",
-              title: t("Disable embeds"),
-              onClick: document.disableEmbeds,
-              visible: !!showToggleEmbeds && !document.embedsDisabled,
-              icon: <BuildingBlocksIcon />,
-            },
+            actionToMenuItem(importDocument, context),
+            actionToMenuItem(createTemplate, context),
+            actionToMenuItem(duplicateDocument, context),
+            actionToMenuItem(publishDocument, context),
+            actionToMenuItem(unpublishDocument, context),
+            actionToMenuItem(archiveDocument, context),
+            actionToMenuItem(moveDocument, context),
+            actionToMenuItem(pinDocument, context),
             {
               type: "separator",
             },
+            actionToMenuItem(openDocumentComments, context),
+            actionToMenuItem(openDocumentHistory, context),
+            actionToMenuItem(openDocumentInsights, context),
+            actionToMenuItem(downloadDocument, context),
+            actionToMenuItem(printDocument, context),
             {
-              type: "route",
-              title: t("History"),
-              to: isRevision
-                ? documentUrl(document)
-                : documentHistoryUrl(document),
-              visible: canViewHistory,
-              icon: <HistoryIcon />,
+              type: "separator",
             },
-            {
-              type: "button",
-              title: t("Download"),
-              onClick: document.download,
-              visible: !!can.download,
-              icon: <DownloadIcon />,
-            },
-            {
-              type: "button",
-              title: t("Print"),
-              onClick: handlePrint,
-              visible: !!showDisplayOptions,
-              icon: <PrintIcon />,
-            },
+            actionToMenuItem(deleteDocument, context),
+            actionToMenuItem(permanentlyDeleteDocument, context),
           ]}
         />
-        {showDisplayOptions && (
+        {(showDisplayOptions || showToggleEmbeds) && (
           <>
             <Separator />
-            <Style>
-              <ToggleMenuItem
-                width={26}
-                height={14}
-                label={t("Full width")}
-                checked={document.fullWidth}
-                onChange={(ev) => {
-                  document.fullWidth = ev.currentTarget.checked;
-                  document.save();
-                }}
-              />
-            </Style>
+            {showToggleEmbeds && (
+              <Style>
+                <ToggleMenuItem
+                  width={26}
+                  height={14}
+                  label={t("Enable embeds")}
+                  checked={!document.embedsDisabled}
+                  onChange={
+                    document.embedsDisabled
+                      ? document.enableEmbeds
+                      : document.disableEmbeds
+                  }
+                />
+              </Style>
+            )}
+            {showDisplayOptions && !isMobile && can.update && (
+              <Style>
+                <ToggleMenuItem
+                  width={26}
+                  height={14}
+                  label={t("Full width")}
+                  checked={document.fullWidth}
+                  onChange={(ev) => {
+                    document.fullWidth = ev.currentTarget.checked;
+                    document.save();
+                  }}
+                />
+              </Style>
+            )}
           </>
         )}
       </ContextMenu>
-      {renderModals && (
-        <>
-          {can.move && (
-            <Modal
-              title={t("Move {{ documentName }}", {
-                documentName: document.noun,
-              })}
-              onRequestClose={() => setShowMoveModal(false)}
-              isOpen={showMoveModal}
-            >
-              <DocumentMove
-                document={document}
-                onRequestClose={() => setShowMoveModal(false)}
-              />
-            </Modal>
-          )}
-          {can.delete && (
-            <Modal
-              title={t("Delete {{ documentName }}", {
-                documentName: document.noun,
-              })}
-              onRequestClose={() => setShowDeleteModal(false)}
-              isOpen={showDeleteModal}
-            >
-              <DocumentDelete
-                document={document}
-                onSubmit={() => setShowDeleteModal(false)}
-              />
-            </Modal>
-          )}
-          {can.permanentDelete && (
-            <Modal
-              title={t("Permanently delete {{ documentName }}", {
-                documentName: document.noun,
-              })}
-              onRequestClose={() => setShowPermanentDeleteModal(false)}
-              isOpen={showPermanentDeleteModal}
-            >
-              <DocumentPermanentDelete
-                document={document}
-                onSubmit={() => setShowPermanentDeleteModal(false)}
-              />
-            </Modal>
-          )}
-          {can.update && (
-            <Modal
-              title={t("Create template")}
-              onRequestClose={() => setShowTemplateModal(false)}
-              isOpen={showTemplateModal}
-            >
-              <DocumentTemplatize
-                documentId={document.id}
-                onSubmit={() => setShowTemplateModal(false)}
-              />
-            </Modal>
-          )}
-        </>
-      )}
     </>
   );
 }

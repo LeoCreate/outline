@@ -1,15 +1,12 @@
-import { EditorView } from "prosemirror-view";
 import * as React from "react";
 import styled from "styled-components";
-import { CommandFactory } from "@shared/editor/lib/Extension";
 import { MenuItem } from "@shared/editor/types";
+import { useEditor } from "./EditorContext";
 import ToolbarButton from "./ToolbarButton";
 import ToolbarSeparator from "./ToolbarSeparator";
 import Tooltip from "./Tooltip";
 
 type Props = {
-  commands: Record<string, CommandFactory>;
-  view: EditorView;
   items: MenuItem[];
 };
 
@@ -20,8 +17,20 @@ const FlexibleWrapper = styled.div`
 `;
 
 function ToolbarMenu(props: Props) {
-  const { view, items } = props;
+  const { commands, view } = useEditor();
+  const { items } = props;
   const { state } = view;
+
+  const handleClick = (item: MenuItem) => () => {
+    if (!item.name) {
+      return;
+    }
+
+    const attrs =
+      typeof item.attrs === "function" ? item.attrs(state) : item.attrs;
+
+    commands[item.name](attrs);
+  };
 
   return (
     <FlexibleWrapper>
@@ -32,16 +41,12 @@ function ToolbarMenu(props: Props) {
         if (item.visible === false || !item.icon) {
           return null;
         }
-        const Icon = item.icon;
         const isActive = item.active ? item.active(state) : false;
 
         return (
           <Tooltip tooltip={item.tooltip} key={index}>
-            <ToolbarButton
-              onClick={() => item.name && props.commands[item.name](item.attrs)}
-              active={isActive}
-            >
-              <Icon color="currentColor" />
+            <ToolbarButton onClick={handleClick(item)} active={isActive}>
+              {React.cloneElement(item.icon, { color: "currentColor" })}
             </ToolbarButton>
           </Tooltip>
         );

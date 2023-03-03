@@ -4,6 +4,7 @@ import "styled-components";
 // and extend them!
 declare module "styled-components" {
   interface EditorTheme {
+    isDark: boolean;
     background: string;
     text: string;
     cursor: string;
@@ -15,7 +16,6 @@ declare module "styled-components" {
     tableDivider: string;
     tableSelected: string;
     tableSelectedBackground: string;
-    tableHeaderBackground: string;
     quote: string;
     codeBackground: string;
     codeBorder: string;
@@ -25,7 +25,6 @@ declare module "styled-components" {
     fontFamily: string;
     fontFamilyMono: string;
     fontWeight: number;
-    zIndex: number;
     link: string;
     placeholder: string;
     textSecondary: string;
@@ -48,17 +47,6 @@ declare module "styled-components" {
     codePlaceholder: string;
     codeInserted: string;
     codeImportant: string;
-    blockToolbarBackground: string;
-    blockToolbarTrigger: string;
-    blockToolbarTriggerIcon: string;
-    blockToolbarItem: string;
-    blockToolbarIcon: undefined;
-    blockToolbarIconSelected: string;
-    blockToolbarText: string;
-    blockToolbarTextSelected: string;
-    blockToolbarSelectedBackground: string;
-    blockToolbarHoverBackground: string;
-    blockToolbarDivider: string;
     noticeInfoBackground: string;
     noticeInfoText: string;
     noticeTipBackground: string;
@@ -80,6 +68,7 @@ declare module "styled-components" {
     smokeLight: string;
     smokeDark: string;
     white: string;
+    white05: string;
     white10: string;
     white50: string;
     white75: string;
@@ -87,7 +76,8 @@ declare module "styled-components" {
     black05: string;
     black10: string;
     black50: string;
-    primary: string;
+    black75: string;
+    accent: string;
     yellow: string;
     warmGrey: string;
     searchHighlight: string;
@@ -106,6 +96,16 @@ declare module "styled-components" {
     };
   }
 
+  interface Breakpoints {
+    breakpoints: {
+      mobile: number;
+      mobileLarge: number;
+      tablet: number;
+      desktop: number;
+      desktopLarge: number;
+    };
+  }
+
   interface Spacing {
     padding: string;
     vpadding: string;
@@ -116,39 +116,28 @@ declare module "styled-components" {
     sidebarMaxWidth: number;
   }
 
-  interface Breakpoints {
-    mobile: number;
-    tablet: number;
-    desktop: number;
-    desktopLarge: number;
-  }
-
-  interface Depths {
-    header: number;
-    sidebar: number;
-    hoverPreview: number;
-    modalOverlay: number;
-    modal: number;
-    menu: number;
-    toasts: number;
-    popover: number;
-    titleBarDivider: number;
-    loadingIndicatorBar: number;
-    commandBar: number;
-  }
-
-  export interface DefaultTheme extends Colors, Spacing, EditorTheme {
+  export interface DefaultTheme
+    extends Colors,
+      Spacing,
+      Breakpoints,
+      EditorTheme {
     background: string;
     backgroundTransition: string;
-    buttonBackground: string;
-    buttonText: string;
+    accent: string;
+    accentText: string;
     secondaryBackground: string;
     link: string;
     text: string;
     cursor: string;
     textSecondary: string;
     textTertiary: string;
+    textDiffInserted: string;
+    textDiffInsertedBackground: string;
+    textDiffDeleted: string;
+    textDiffDeletedBackground: string;
     placeholder: string;
+    commentBackground: string;
+    commentActiveBackground: string;
     sidebarBackground: string;
     sidebarActiveBackground: string;
     sidebarControlHoverBackground: string;
@@ -156,6 +145,9 @@ declare module "styled-components" {
     sidebarText: string;
     backdrop: string;
     shadow: string;
+    modalBackdrop: string;
+    modalBackground: string;
+    modalShadow: string;
     menuItemSelected: string;
     menuBackground: string;
     menuShadow: string;
@@ -180,8 +172,5 @@ declare module "styled-components" {
     progressBarBackground: string;
     scrollbarBackground: string;
     scrollbarThumb: string;
-
-    breakpoints: Breakpoints;
-    depths: Depths;
   }
 }

@@ -9,10 +9,32 @@ import {
   MenuItemButton,
   MenuItemWithChildren,
 } from "~/types";
+import Analytics from "~/utils/Analytics";
+
+function resolve<T>(value: any, context: ActionContext): T {
+  return typeof value === "function" ? value(context) : value;
+}
 
 export function createAction(definition: Optional<Action, "id">): Action {
   return {
     ...definition,
+    perform: definition.perform
+      ? (context) => {
+          // We muse use the specific analytics name here as the action name is
+          // translated and potentially contains user strings.
+          if (definition.analyticsName) {
+            Analytics.track("perform_action", definition.analyticsName, {
+              context: context.isButton
+                ? "button"
+                : context.isCommandBar
+                ? "commandbar"
+                : "contextmenu",
+            });
+          }
+
+          return definition.perform?.(context);
+        }
+      : undefined,
     id: uuidv4(),
   };
 }
@@ -21,18 +43,10 @@ export function actionToMenuItem(
   action: Action,
   context: ActionContext
 ): MenuItemButton | MenuItemWithChildren {
-  function resolve<T>(value: any): T {
-    if (typeof value === "function") {
-      return value(context);
-    }
-
-    return value;
-  }
-
-  const resolvedIcon = resolve<React.ReactElement<any>>(action.icon);
-  const resolvedChildren = resolve<Action[]>(action.children);
+  const resolvedIcon = resolve<React.ReactElement<any>>(action.icon, context);
+  const resolvedChildren = resolve<Action[]>(action.children, context);
   const visible = action.visible ? action.visible(context) : true;
-  const title = resolve<string>(action.name);
+  const title = resolve<string>(action.name, context);
   const icon =
     resolvedIcon && action.iconInContextMenu !== false
       ? React.cloneElement(resolvedIcon, {
@@ -60,8 +74,17 @@ export function actionToMenuItem(
     title,
     icon,
     visible,
-    onClick: () => action.perform && action.perform(context),
-    selected: action.selected ? action.selected(context) : undefined,
+    dangerous: action.dangerous,
+    onClick: () => {
+      try {
+        action.perform?.(context);
+      } catch (err) {
+        context.stores.toasts.showToast(err.message, {
+          type: "error",
+        });
+      }
+    },
+    selected: action.selected?.(context),
   };
 }
 
@@ -69,23 +92,15 @@ export function actionToKBar(
   action: Action,
   context: ActionContext
 ): CommandBarAction[] {
-  function resolve<T>(value: any): T {
-    if (typeof value === "function") {
-      return value(context);
-    }
-
-    return value;
-  }
-
   if (typeof action.visible === "function" && !action.visible(context)) {
     return [];
   }
 
-  const resolvedIcon = resolve<React.ReactElement<any>>(action.icon);
-  const resolvedChildren = resolve<Action[]>(action.children);
-  const resolvedSection = resolve<string>(action.section);
-  const resolvedName = resolve<string>(action.name);
-  const resolvedPlaceholder = resolve<string>(action.placeholder);
+  const resolvedIcon = resolve<React.ReactElement>(action.icon, context);
+  const resolvedChildren = resolve<Action[]>(action.children, context);
+  const resolvedSection = resolve<string>(action.section, context);
+  const resolvedName = resolve<string>(action.name, context);
+  const resolvedPlaceholder = resolve<string>(action.placeholder, context);
   const children = resolvedChildren
     ? flattenDeep(resolvedChildren.map((a) => actionToKBar(a, context))).filter(
         (a) => !!a
@@ -96,14 +111,13 @@ export function actionToKBar(
     {
       id: action.id,
       name: resolvedName,
+      analyticsName: action.analyticsName,
       section: resolvedSection,
       placeholder: resolvedPlaceholder,
       keywords: action.keywords ?? "",
       shortcut: action.shortcut || [],
       icon: resolvedIcon,
-      perform: action.perform
-        ? () => action.perform && action.perform(context)
-        : undefined,
+      perform: action.perform ? () => action.perform?.(context) : undefined,
     },
     // @ts-expect-error ts-migrate(2769) FIXME: No overload matches this call.
   ].concat(children.map((child) => ({ ...child, parent: action.id })));

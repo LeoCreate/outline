@@ -1,26 +1,28 @@
 import * as React from "react";
 import { USER_PRESENCE_INTERVAL } from "@shared/constants";
-import { SocketContext } from "~/components/SocketProvider";
+import { WebsocketContext } from "~/components/WebsocketProvider";
 
 type Props = {
-  children?: React.ReactNode;
   documentId: string;
   isEditing: boolean;
+  presence: boolean;
 };
 
 export default class SocketPresence extends React.Component<Props> {
-  static contextType = SocketContext;
+  static contextType = WebsocketContext;
 
-  previousContext: typeof SocketContext;
+  previousContext: typeof WebsocketContext;
 
-  editingInterval: ReturnType<typeof setInterval>;
+  editingInterval: ReturnType<typeof setInterval> | undefined;
 
   componentDidMount() {
-    this.editingInterval = setInterval(() => {
-      if (this.props.isEditing) {
-        this.emitPresence();
-      }
-    }, USER_PRESENCE_INTERVAL);
+    this.editingInterval = this.props.presence
+      ? setInterval(() => {
+          if (this.props.isEditing) {
+            this.emitPresence();
+          }
+        }, USER_PRESENCE_INTERVAL)
+      : undefined;
     this.setupOnce();
   }
 
@@ -40,7 +42,9 @@ export default class SocketPresence extends React.Component<Props> {
       this.context.off("authenticated", this.emitJoin);
     }
 
-    clearInterval(this.editingInterval);
+    if (this.editingInterval) {
+      clearInterval(this.editingInterval);
+    }
   }
 
   setupOnce = () => {

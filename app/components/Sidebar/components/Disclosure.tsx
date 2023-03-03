@@ -1,17 +1,26 @@
 import { CollapsedIcon } from "outline-icons";
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 import styled, { css } from "styled-components";
 import NudeButton from "~/components/NudeButton";
 
-type Props = {
+type Props = React.ComponentProps<typeof Button> & {
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
   expanded: boolean;
   root?: boolean;
 };
 
 function Disclosure({ onClick, root, expanded, ...rest }: Props) {
+  const { t } = useTranslation();
+
   return (
-    <Button size={20} onClick={onClick} $root={root} {...rest}>
+    <Button
+      size={20}
+      onClick={onClick}
+      $root={root}
+      aria-label={expanded ? t("Collapse") : t("Expand")}
+      {...rest}
+    >
       <StyledCollapsedIcon expanded={expanded} size={20} color="currentColor" />
     </Button>
   );

@@ -1,79 +1,47 @@
 /* global File Promise */
 import { PluginSimple } from "markdown-it";
+import { transparentize } from "polished";
 import { baseKeymap } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 import { inputRules, InputRule } from "prosemirror-inputrules";
 import { keymap } from "prosemirror-keymap";
 import { MarkdownParser } from "prosemirror-markdown";
-import { Schema, NodeSpec, MarkSpec, Node } from "prosemirror-model";
+import {
+  Schema,
+  NodeSpec,
+  MarkSpec,
+  Node as ProsemirrorNode,
+} from "prosemirror-model";
 import { EditorState, Selection, Plugin, Transaction } from "prosemirror-state";
-import { selectColumn, selectRow, selectTable } from "prosemirror-utils";
 import { Decoration, EditorView } from "prosemirror-view";
 import * as React from "react";
-import { DefaultTheme, ThemeProps } from "styled-components";
+import styled, { css, DefaultTheme, ThemeProps } from "styled-components";
+import Styles from "@shared/editor/components/Styles";
+import { EmbedDescriptor } from "@shared/editor/embeds";
 import Extension, { CommandFactory } from "@shared/editor/lib/Extension";
 import ExtensionManager from "@shared/editor/lib/ExtensionManager";
-import headingToSlug from "@shared/editor/lib/headingToSlug";
 import { MarkdownSerializer } from "@shared/editor/lib/markdown/serializer";
-
-// marks
-import Bold from "@shared/editor/marks/Bold";
-import Code from "@shared/editor/marks/Code";
-import Highlight from "@shared/editor/marks/Highlight";
-import Italic from "@shared/editor/marks/Italic";
-import Link from "@shared/editor/marks/Link";
-import TemplatePlaceholder from "@shared/editor/marks/Placeholder";
-import Strikethrough from "@shared/editor/marks/Strikethrough";
-import Underline from "@shared/editor/marks/Underline";
-
-// nodes
-import Attachment from "@shared/editor/nodes/Attachment";
-import Blockquote from "@shared/editor/nodes/Blockquote";
-import BulletList from "@shared/editor/nodes/BulletList";
-import CheckboxItem from "@shared/editor/nodes/CheckboxItem";
-import CheckboxList from "@shared/editor/nodes/CheckboxList";
-import CodeBlock from "@shared/editor/nodes/CodeBlock";
-import CodeFence from "@shared/editor/nodes/CodeFence";
-import Doc from "@shared/editor/nodes/Doc";
-import Embed from "@shared/editor/nodes/Embed";
-import Emoji from "@shared/editor/nodes/Emoji";
-import HardBreak from "@shared/editor/nodes/HardBreak";
-import Heading from "@shared/editor/nodes/Heading";
-import HorizontalRule from "@shared/editor/nodes/HorizontalRule";
-import Image from "@shared/editor/nodes/Image";
-import ListItem from "@shared/editor/nodes/ListItem";
-import Notice from "@shared/editor/nodes/Notice";
-import OrderedList from "@shared/editor/nodes/OrderedList";
-import Paragraph from "@shared/editor/nodes/Paragraph";
+import textBetween from "@shared/editor/lib/textBetween";
+import Mark from "@shared/editor/marks/Mark";
+import Node from "@shared/editor/nodes/Node";
 import ReactNode from "@shared/editor/nodes/ReactNode";
-import Table from "@shared/editor/nodes/Table";
-import TableCell from "@shared/editor/nodes/TableCell";
-import TableHeadCell from "@shared/editor/nodes/TableHeadCell";
-import TableRow from "@shared/editor/nodes/TableRow";
-import Text from "@shared/editor/nodes/Text";
-
-// plugins
-import BlockMenuTrigger from "@shared/editor/plugins/BlockMenuTrigger";
-import EmojiTrigger from "@shared/editor/plugins/EmojiTrigger";
-import Folding from "@shared/editor/plugins/Folding";
-import History from "@shared/editor/plugins/History";
-import Keys from "@shared/editor/plugins/Keys";
-import MaxLength from "@shared/editor/plugins/MaxLength";
-import PasteHandler from "@shared/editor/plugins/PasteHandler";
-import Placeholder from "@shared/editor/plugins/Placeholder";
-import SmartText from "@shared/editor/plugins/SmartText";
-import TrailingNode from "@shared/editor/plugins/TrailingNode";
-import { EmbedDescriptor, ToastType } from "@shared/editor/types";
+import fullExtensionsPackage from "@shared/editor/packages/full";
+import { EventType } from "@shared/editor/types";
+import { UserPreferences } from "@shared/types";
+import ProsemirrorHelper from "@shared/utils/ProsemirrorHelper";
+import EventEmitter from "@shared/utils/events";
 import Flex from "~/components/Flex";
+import { PortalContext } from "~/components/Portal";
 import { Dictionary } from "~/hooks/useDictionary";
+import Logger from "~/utils/Logger";
 import BlockMenu from "./components/BlockMenu";
 import ComponentView from "./components/ComponentView";
+import EditorContext from "./components/EditorContext";
 import EmojiMenu from "./components/EmojiMenu";
 import { SearchResult } from "./components/LinkEditor";
 import LinkToolbar from "./components/LinkToolbar";
 import SelectionToolbar from "./components/SelectionToolbar";
-import EditorContainer from "./components/Styles";
 import WithTheme from "./components/WithTheme";
 
 export { default as Extension } from "@shared/editor/lib/Extension";
@@ -81,16 +49,20 @@ export { default as Extension } from "@shared/editor/lib/Extension";
 export type Props = {
   /** An optional identifier for the editor context. It is used to persist local settings */
   id?: string;
+  /** The current userId, if any */
+  userId?: string;
   /** The editor content, should only be changed if you wish to reset the content */
   value?: string;
-  /** The initial editor content */
-  defaultValue: string;
+  /** The initial editor content as a markdown string or JSON object */
+  defaultValue: string | object;
   /** Placeholder displayed when the editor is empty */
   placeholder: string;
-  /** Additional extensions to load into the editor */
-  extensions?: Extension[];
+  /** Extensions to load into the editor */
+  extensions?: (typeof Node | typeof Mark | typeof Extension | Extension)[];
   /** If the editor should be focused on mount */
   autoFocus?: boolean;
+  /** The focused comment, if any */
+  focusedCommentId?: string;
   /** If the editor should not allow editing */
   readOnly?: boolean;
   /** If the editor should still allow editing checkboxes when it is readOnly */
@@ -118,7 +90,13 @@ export type Props = {
   /** Callback when user uses cancel key combo */
   onCancel?: () => void;
   /** Callback when user changes editor content */
-  onChange?: (value: () => string) => void;
+  onChange?: (value: () => any) => void;
+  /** Callback when a comment mark is clicked */
+  onClickCommentMark?: (commentId: string) => void;
+  /** Callback when a comment mark is created */
+  onCreateCommentMark?: (commentId: string, userId: string) => void;
+  /** Callback when a comment mark is removed */
+  onDeleteCommentMark?: (commentId: string) => void;
   /** Callback when a file upload begins */
   onFileUploadStart?: () => void;
   /** Callback when a file upload ends */
@@ -133,18 +111,19 @@ export type Props = {
     event: MouseEvent | React.MouseEvent<HTMLButtonElement>
   ) => void;
   /** Callback when user hovers on any link in the document */
-  onHoverLink?: (event: MouseEvent) => boolean;
-  /** Callback when user clicks on any hashtag in the document */
-  onClickHashtag?: (tag: string, event: MouseEvent) => void;
+  onHoverLink?: (element: HTMLAnchorElement) => boolean;
   /** Callback when user presses any key with document focused */
   onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   /** Collection of embed types to render in the document */
   embeds: EmbedDescriptor[];
+  /** Display preferences for the logged in user, if any. */
+  userPreferences?: UserPreferences | null;
   /** Whether embeds should be rendered without an iframe */
   embedsDisabled?: boolean;
   /** Callback when a toast message is triggered (eg "link copied") */
-  onShowToast: (message: string, code: ToastType) => void;
+  onShowToast: (message: string) => void;
   className?: string;
+  /** Optional style overrides */
   style?: React.CSSProperties;
 };
 
@@ -185,7 +164,7 @@ export class Editor extends React.PureComponent<
       // no default behavior
     },
     embeds: [],
-    extensions: [],
+    extensions: fullExtensionsPackage,
   };
 
   state = {
@@ -200,7 +179,8 @@ export class Editor extends React.PureComponent<
 
   isBlurred: boolean;
   extensions: ExtensionManager;
-  element?: HTMLElement | null;
+  elementRef = React.createRef<HTMLDivElement>();
+  wrapperRef = React.createRef<HTMLDivElement>();
   view: EditorView;
   schema: Schema;
   serializer: MarkdownSerializer;
@@ -211,7 +191,7 @@ export class Editor extends React.PureComponent<
   inputRules: InputRule[];
   nodeViews: {
     [name: string]: (
-      node: Node,
+      node: ProsemirrorNode,
       view: EditorView,
       getPos: () => number,
       decorations: Decoration<{
@@ -224,9 +204,25 @@ export class Editor extends React.PureComponent<
   marks: { [name: string]: MarkSpec };
   commands: Record<string, CommandFactory>;
   rulePlugins: PluginSimple[];
+  events = new EventEmitter();
 
-  componentDidMount() {
+  public constructor(props: Props & ThemeProps<DefaultTheme>) {
+    super(props);
+    this.events.on(EventType.linkMenuOpen, this.handleOpenLinkMenu);
+    this.events.on(EventType.linkMenuClose, this.handleCloseLinkMenu);
+    this.events.on(EventType.blockMenuOpen, this.handleOpenBlockMenu);
+    this.events.on(EventType.blockMenuClose, this.handleCloseBlockMenu);
+    this.events.on(EventType.emojiMenuOpen, this.handleOpenEmojiMenu);
+    this.events.on(EventType.emojiMenuClose, this.handleCloseEmojiMenu);
+  }
+
+  /**
+   * We use componentDidMount instead of constructor as the init method requires
+   * that the dom is already mounted.
+   */
+  public componentDidMount() {
     this.init();
+    window.addEventListener("theme-changed", this.dispatchThemeChanged);
 
     if (this.props.scrollTo) {
       this.scrollToAnchor(this.props.scrollTo);
@@ -243,7 +239,7 @@ export class Editor extends React.PureComponent<
     }
   }
 
-  componentDidUpdate(prevProps: Props) {
+  public componentDidUpdate(prevProps: Props) {
     // Allow changes to the 'value' prop to update the editor from outside
     if (this.props.value && prevProps.value !== this.props.value) {
       const newState = this.createState(this.props.value);
@@ -280,9 +276,7 @@ export class Editor extends React.PureComponent<
       !this.state.selectionMenuOpen
     ) {
       this.isBlurred = true;
-      if (this.props.onBlur) {
-        this.props.onBlur();
-      }
+      this.props.onBlur?.();
     }
 
     if (
@@ -293,13 +287,15 @@ export class Editor extends React.PureComponent<
         this.state.selectionMenuOpen)
     ) {
       this.isBlurred = false;
-      if (this.props.onFocus) {
-        this.props.onFocus();
-      }
+      this.props.onFocus?.();
     }
   }
 
-  init() {
+  public componentWillUnmount(): void {
+    window.removeEventListener("theme-changed", this.dispatchThemeChanged);
+  }
+
+  private init() {
     this.extensions = this.createExtensions();
     this.nodes = this.createNodes();
     this.marks = this.createMarks();
@@ -316,138 +312,36 @@ export class Editor extends React.PureComponent<
     this.commands = this.createCommands();
   }
 
-  createExtensions() {
-    const { dictionary } = this.props;
-
-    // adding nodes here? Update server/editor/renderToHtml.ts for serialization
-    // on the server
-    return new ExtensionManager(
-      [
-        ...[
-          new Doc(),
-          new HardBreak(),
-          new Paragraph(),
-          new Blockquote(),
-          new CodeBlock({
-            dictionary,
-            onShowToast: this.props.onShowToast,
-          }),
-          new CodeFence({
-            dictionary,
-            onShowToast: this.props.onShowToast,
-          }),
-          new Emoji(),
-          new Text(),
-          new CheckboxList(),
-          new CheckboxItem(),
-          new BulletList(),
-          new Embed({ embeds: this.props.embeds }),
-          new ListItem(),
-          new Attachment({
-            dictionary,
-          }),
-          new Notice({
-            dictionary,
-          }),
-          new Heading({
-            dictionary,
-            onShowToast: this.props.onShowToast,
-          }),
-          new HorizontalRule(),
-          new Image({
-            dictionary,
-            uploadFile: this.props.uploadFile,
-            onFileUploadStart: this.props.onFileUploadStart,
-            onFileUploadStop: this.props.onFileUploadStop,
-            onShowToast: this.props.onShowToast,
-          }),
-          new Table(),
-          new TableCell({
-            onSelectTable: this.handleSelectTable,
-            onSelectRow: this.handleSelectRow,
-          }),
-          new TableHeadCell({
-            onSelectColumn: this.handleSelectColumn,
-          }),
-          new TableRow(),
-          new Bold(),
-          new Code(),
-          new Highlight(),
-          new Italic(),
-          new TemplatePlaceholder(),
-          new Underline(),
-          new Link({
-            onKeyboardShortcut: this.handleOpenLinkMenu,
-            onClickLink: this.props.onClickLink,
-            onClickHashtag: this.props.onClickHashtag,
-            onHoverLink: this.props.onHoverLink,
-          }),
-          new Strikethrough(),
-          new OrderedList(),
-          new History(),
-          new Folding(),
-          new SmartText(),
-          new TrailingNode(),
-          new PasteHandler(),
-          new Keys({
-            onBlur: this.handleEditorBlur,
-            onFocus: this.handleEditorFocus,
-            onSave: this.handleSave,
-            onSaveAndExit: this.handleSaveAndExit,
-            onCancel: this.props.onCancel,
-          }),
-          new BlockMenuTrigger({
-            dictionary,
-            onOpen: this.handleOpenBlockMenu,
-            onClose: this.handleCloseBlockMenu,
-          }),
-          new EmojiTrigger({
-            onOpen: (search: string) => {
-              this.setState({ emojiMenuOpen: true, blockMenuSearch: search });
-            },
-            onClose: () => {
-              this.setState({ emojiMenuOpen: false });
-            },
-          }),
-          new Placeholder({
-            placeholder: this.props.placeholder,
-          }),
-          new MaxLength({
-            maxLength: this.props.maxLength,
-          }),
-        ],
-        ...(this.props.extensions || []),
-      ],
-      this
-    );
+  private createExtensions() {
+    return new ExtensionManager(this.props.extensions, this);
   }
 
-  createPlugins() {
+  private createPlugins() {
     return this.extensions.plugins;
   }
 
-  createRulePlugins() {
+  private createRulePlugins() {
     return this.extensions.rulePlugins;
   }
 
-  createKeymaps() {
+  private createKeymaps() {
     return this.extensions.keymaps({
       schema: this.schema,
     });
   }
 
-  createInputRules() {
+  private createInputRules() {
     return this.extensions.inputRules({
       schema: this.schema,
     });
   }
 
-  createNodeViews() {
+  private createNodeViews() {
     return this.extensions.extensions
       .filter((extension: ReactNode) => extension.component)
       .reduce((nodeViews, extension: ReactNode) => {
         const nodeView = (
-          node: Node,
+          node: ProsemirrorNode,
           view: EditorView,
           getPos: () => number,
           decorations: Decoration<{
@@ -471,40 +365,40 @@ export class Editor extends React.PureComponent<
       }, {});
   }
 
-  createCommands() {
+  private createCommands() {
     return this.extensions.commands({
       schema: this.schema,
       view: this.view,
     });
   }
 
-  createNodes() {
+  private createNodes() {
     return this.extensions.nodes;
   }
 
-  createMarks() {
+  private createMarks() {
     return this.extensions.marks;
   }
 
-  createSchema() {
+  private createSchema() {
     return new Schema({
       nodes: this.nodes,
       marks: this.marks,
     });
   }
 
-  createSerializer() {
+  private createSerializer() {
     return this.extensions.serializer();
   }
 
-  createParser() {
+  private createParser() {
     return this.extensions.parser({
       schema: this.schema,
       plugins: this.rulePlugins,
     });
   }
 
-  createPasteParser() {
+  private createPasteParser() {
     return this.extensions.parser({
       schema: this.schema,
       rules: { linkify: true, emoji: false },
@@ -512,7 +406,7 @@ export class Editor extends React.PureComponent<
     });
   }
 
-  createState(value?: string) {
+  private createState(value?: string | object) {
     const doc = this.createDocument(value || this.props.defaultValue);
 
     return EditorState.create({
@@ -521,7 +415,9 @@ export class Editor extends React.PureComponent<
       plugins: [
         ...this.plugins,
         ...this.keymaps,
-        dropCursor({ color: this.props.theme.cursor }),
+        dropCursor({
+          color: this.props.theme.cursor,
+        }),
         gapCursor(),
         inputRules({
           rules: this.inputRules,
@@ -531,12 +427,17 @@ export class Editor extends React.PureComponent<
     });
   }
 
-  createDocument(content: string) {
-    return this.parser.parse(content);
+  private createDocument(content: string | object) {
+    // Looks like Markdown
+    if (typeof content === "string") {
+      return this.parser.parse(content);
+    }
+
+    return ProsemirrorNode.fromJSON(this.schema, content);
   }
 
-  createView() {
-    if (!this.element) {
+  private createView() {
+    if (!this.elementRef.current) {
       throw new Error("createView called before ref available");
     }
 
@@ -549,11 +450,15 @@ export class Editor extends React.PureComponent<
     };
 
     const self = this; // eslint-disable-line
-    const view = new EditorView(this.element, {
+    const view = new EditorView(this.elementRef.current, {
+      handleDOMEvents: {
+        blur: this.handleEditorBlur,
+        focus: this.handleEditorFocus,
+      },
       state: this.createState(this.props.value),
       editable: () => !this.props.readOnly,
       nodeViews: this.nodeViews,
-      dispatchTransaction: function (transaction) {
+      dispatchTransaction(transaction) {
         // callback is bound to have the view instance as its this binding
         const { state, transactions } = this.state.applyTransaction(
           transaction
@@ -587,7 +492,7 @@ export class Editor extends React.PureComponent<
     return view;
   }
 
-  scrollToAnchor(hash: string) {
+  public scrollToAnchor(hash: string) {
     if (!hash) {
       return;
     }
@@ -595,152 +500,213 @@ export class Editor extends React.PureComponent<
     try {
       const element = document.querySelector(hash);
       if (element) {
-        element.scrollIntoView({ behavior: "smooth" });
+        setTimeout(() => element.scrollIntoView({ behavior: "smooth" }), 0);
       }
     } catch (err) {
       // querySelector will throw an error if the hash begins with a number
       // or contains a period. This is protected against now by safeSlugify
       // however previous links may be in the wild.
-      console.warn(`Attempted to scroll to invalid hash: ${hash}`, err);
+      Logger.debug("editor", `Attempted to scroll to invalid hash: ${hash}`);
     }
   }
 
-  calculateDir = () => {
-    if (!this.element) {
+  public value = (asString = true, trim?: boolean) => {
+    if (asString) {
+      const content = this.serializer.serialize(this.view.state.doc);
+      return trim ? content.trim() : content;
+    }
+
+    return (trim
+      ? ProsemirrorHelper.trim(this.view.state.doc)
+      : this.view.state.doc
+    ).toJSON();
+  };
+
+  private calculateDir = () => {
+    if (!this.elementRef.current) {
       return;
     }
 
     const isRTL =
       this.props.dir === "rtl" ||
-      getComputedStyle(this.element).direction === "rtl";
+      getComputedStyle(this.elementRef.current).direction === "rtl";
 
     if (this.state.isRTL !== isRTL) {
       this.setState({ isRTL });
     }
   };
 
-  value = (): string => {
-    return this.serializer.serialize(this.view.state.doc);
-  };
-
-  handleChange = () => {
-    if (!this.props.onChange) {
-      return;
-    }
-
-    this.props.onChange(() => {
-      return this.value();
-    });
-  };
-
-  handleSave = () => {
-    const { onSave } = this.props;
-    if (onSave) {
-      onSave({ done: false });
-    }
-  };
-
-  handleSaveAndExit = () => {
-    const { onSave } = this.props;
-    if (onSave) {
-      onSave({ done: true });
-    }
-  };
-
-  handleEditorBlur = () => {
-    this.setState({ isEditorFocused: false });
-  };
-
-  handleEditorFocus = () => {
-    this.setState({ isEditorFocused: true });
-  };
-
-  handleOpenSelectionMenu = () => {
-    this.setState({ blockMenuOpen: false, selectionMenuOpen: true });
-  };
-
-  handleCloseSelectionMenu = () => {
-    this.setState({ selectionMenuOpen: false });
-  };
-
-  handleOpenLinkMenu = () => {
-    this.setState({ blockMenuOpen: false, linkMenuOpen: true });
-  };
-
-  handleCloseLinkMenu = () => {
-    this.setState({ linkMenuOpen: false });
-  };
-
-  handleOpenBlockMenu = (search: string) => {
-    this.setState({ blockMenuOpen: true, blockMenuSearch: search });
-  };
-
-  handleCloseBlockMenu = () => {
-    if (!this.state.blockMenuOpen) {
-      return;
-    }
-    this.setState({ blockMenuOpen: false });
-  };
-
-  handleSelectRow = (index: number, state: EditorState) => {
-    this.view.dispatch(selectRow(index)(state.tr));
-  };
-
-  handleSelectColumn = (index: number, state: EditorState) => {
-    this.view.dispatch(selectColumn(index)(state.tr));
-  };
-
-  handleSelectTable = (state: EditorState) => {
-    this.view.dispatch(selectTable(state.tr));
-  };
-
-  // 'public' methods
-  focusAtStart = () => {
+  /**
+   * Focus the editor at the start of the content.
+   */
+  public focusAtStart = () => {
     const selection = Selection.atStart(this.view.state.doc);
     const transaction = this.view.state.tr.setSelection(selection);
     this.view.dispatch(transaction);
     this.view.focus();
   };
 
-  focusAtEnd = () => {
+  /**
+   * Focus the editor at the end of the content.
+   */
+  public focusAtEnd = () => {
     const selection = Selection.atEnd(this.view.state.doc);
     const transaction = this.view.state.tr.setSelection(selection);
     this.view.dispatch(transaction);
     this.view.focus();
   };
 
-  getHeadings = () => {
-    const headings: { title: string; level: number; id: string }[] = [];
-    const previouslySeen = {};
-
-    this.view.state.doc.forEach((node) => {
-      if (node.type.name === "heading") {
-        // calculate the optimal slug
-        const slug = headingToSlug(node);
-        let id = slug;
-
-        // check if we've already used it, and if so how many times?
-        // Make the new id based on that number ensuring that we have
-        // unique ID's even when headings are identical
-        if (previouslySeen[slug] > 0) {
-          id = headingToSlug(node, previouslySeen[slug]);
-        }
-
-        // record that we've seen this slug for the next loop
-        previouslySeen[slug] =
-          previouslySeen[slug] !== undefined ? previouslySeen[slug] + 1 : 1;
-
-        headings.push({
-          title: node.textContent,
-          level: node.attrs.level,
-          id,
-        });
-      }
-    });
-    return headings;
+  /**
+   * Returns true if the trimmed content of the editor is an empty string.
+   *
+   * @returns True if the editor is empty
+   */
+  public isEmpty = () => {
+    return ProsemirrorHelper.isEmpty(this.view.state.doc);
   };
 
-  render() {
+  /**
+   * Return the headings in the current editor.
+   *
+   * @returns A list of headings in the document
+   */
+  public getHeadings = () => {
+    return ProsemirrorHelper.getHeadings(this.view.state.doc);
+  };
+
+  /**
+   * Return the tasks/checkmarks in the current editor.
+   *
+   * @returns A list of tasks in the document
+   */
+  public getTasks = () => {
+    return ProsemirrorHelper.getTasks(this.view.state.doc);
+  };
+
+  /**
+   * Return the comments in the current editor.
+   *
+   * @returns A list of comments in the document
+   */
+  public getComments = () => {
+    return ProsemirrorHelper.getComments(this.view.state.doc);
+  };
+
+  /**
+   * Remove a specific comment mark from the document.
+   *
+   * @param commentId The id of the comment to remove
+   */
+  public removeComment = (commentId: string) => {
+    const { state, dispatch } = this.view;
+    let found = false;
+    state.doc.descendants((node, pos) => {
+      if (!node.isInline || found) {
+        return;
+      }
+
+      const mark = node.marks.find(
+        (mark) =>
+          mark.type === state.schema.marks.comment &&
+          mark.attrs.id === commentId
+      );
+
+      if (mark) {
+        dispatch(state.tr.removeMark(pos, pos + node.nodeSize, mark));
+        found = true;
+      }
+    });
+  };
+
+  /**
+   * Return the plain text content of the current editor.
+   *
+   * @returns A string of text
+   */
+  public getPlainText = () => {
+    const { doc } = this.view.state;
+    const textSerializers = Object.fromEntries(
+      Object.entries(this.schema.nodes)
+        .filter(([, node]) => node.spec.toPlainText)
+        .map(([name, node]) => [name, node.spec.toPlainText])
+    );
+
+    return textBetween(doc, 0, doc.content.size, textSerializers);
+  };
+
+  private dispatchThemeChanged = (event: CustomEvent) => {
+    this.view.dispatch(this.view.state.tr.setMeta("theme", event.detail));
+  };
+
+  private handleChange = () => {
+    if (!this.props.onChange) {
+      return;
+    }
+
+    this.props.onChange((asString = true, trim = false) => {
+      return this.view ? this.value(asString, trim) : undefined;
+    });
+  };
+
+  private handleEditorBlur = () => {
+    this.setState({ isEditorFocused: false });
+    return false;
+  };
+
+  private handleEditorFocus = () => {
+    this.setState({ isEditorFocused: true });
+    return false;
+  };
+
+  private handleOpenSelectionMenu = () => {
+    this.setState({ blockMenuOpen: false, selectionMenuOpen: true });
+  };
+
+  private handleCloseSelectionMenu = () => {
+    if (!this.state.selectionMenuOpen) {
+      return;
+    }
+    this.setState({ selectionMenuOpen: false });
+  };
+
+  private handleOpenEmojiMenu = (search: string) => {
+    this.setState({ emojiMenuOpen: true, blockMenuSearch: search });
+  };
+
+  private handleCloseEmojiMenu = () => {
+    if (!this.state.emojiMenuOpen) {
+      return;
+    }
+    this.setState({ emojiMenuOpen: false });
+  };
+
+  private handleOpenLinkMenu = () => {
+    this.setState({ blockMenuOpen: false, linkMenuOpen: true });
+  };
+
+  private handleCloseLinkMenu = () => {
+    this.setState({ linkMenuOpen: false });
+  };
+
+  private handleOpenBlockMenu = (search: string) => {
+    this.setState({ blockMenuOpen: true, blockMenuSearch: search });
+  };
+
+  private handleCloseBlockMenu = (insertNewLine?: boolean) => {
+    if (insertNewLine) {
+      const transaction = this.view.state.tr.split(
+        this.view.state.selection.to
+      );
+      this.view.dispatch(transaction);
+      this.view.focus();
+    }
+    if (!this.state.blockMenuOpen) {
+      return;
+    }
+    this.setState({ blockMenuOpen: false });
+  };
+
+  public render() {
     const {
       dir,
       readOnly,
@@ -754,86 +720,100 @@ export class Editor extends React.PureComponent<
     const { isRTL } = this.state;
 
     return (
-      <Flex
-        onKeyDown={onKeyDown}
-        style={style}
-        className={className}
-        align="flex-start"
-        justify="center"
-        dir={dir}
-        column
-      >
-        <EditorContainer
-          dir={dir}
-          rtl={isRTL}
-          grow={grow}
-          readOnly={readOnly}
-          readOnlyWriteCheckboxes={readOnlyWriteCheckboxes}
-          ref={(ref) => (this.element = ref)}
-        />
-        {!readOnly && this.view && (
-          <React.Fragment>
-            <SelectionToolbar
-              view={this.view}
-              dictionary={dictionary}
-              commands={this.commands}
+      <PortalContext.Provider value={this.wrapperRef.current}>
+        <EditorContext.Provider value={this}>
+          <Flex
+            ref={this.wrapperRef}
+            onKeyDown={onKeyDown}
+            style={style}
+            className={className}
+            align="flex-start"
+            justify="center"
+            column
+          >
+            <EditorContainer
+              dir={dir}
               rtl={isRTL}
-              isTemplate={this.props.template === true}
-              onOpen={this.handleOpenSelectionMenu}
-              onClose={this.handleCloseSelectionMenu}
-              onSearchLink={this.props.onSearchLink}
-              onClickLink={this.props.onClickLink}
-              onCreateLink={this.props.onCreateLink}
-              onShowToast={this.props.onShowToast}
+              grow={grow}
+              readOnly={readOnly}
+              readOnlyWriteCheckboxes={readOnlyWriteCheckboxes}
+              focusedCommentId={this.props.focusedCommentId}
+              ref={this.elementRef}
             />
-            <LinkToolbar
-              view={this.view}
-              dictionary={dictionary}
-              isActive={this.state.linkMenuOpen}
-              onCreateLink={this.props.onCreateLink}
-              onSearchLink={this.props.onSearchLink}
-              onClickLink={this.props.onClickLink}
-              onShowToast={this.props.onShowToast}
-              onClose={this.handleCloseLinkMenu}
-            />
-            <EmojiMenu
-              view={this.view}
-              commands={this.commands}
-              dictionary={dictionary}
-              rtl={isRTL}
-              onShowToast={this.props.onShowToast}
-              isActive={this.state.emojiMenuOpen}
-              search={this.state.blockMenuSearch}
-              onClose={() => this.setState({ emojiMenuOpen: false })}
-            />
-            <BlockMenu
-              view={this.view}
-              commands={this.commands}
-              dictionary={dictionary}
-              rtl={isRTL}
-              isActive={this.state.blockMenuOpen}
-              search={this.state.blockMenuSearch}
-              onClose={this.handleCloseBlockMenu}
-              uploadFile={this.props.uploadFile}
-              onLinkToolbarOpen={this.handleOpenLinkMenu}
-              onFileUploadStart={this.props.onFileUploadStart}
-              onFileUploadStop={this.props.onFileUploadStop}
-              onShowToast={this.props.onShowToast}
-              embeds={this.props.embeds}
-            />
-          </React.Fragment>
-        )}
-      </Flex>
+            {!readOnly && this.view && (
+              <>
+                <SelectionToolbar
+                  view={this.view}
+                  dictionary={dictionary}
+                  commands={this.commands}
+                  rtl={isRTL}
+                  isTemplate={this.props.template === true}
+                  onOpen={this.handleOpenSelectionMenu}
+                  onClose={this.handleCloseSelectionMenu}
+                  onSearchLink={this.props.onSearchLink}
+                  onClickLink={this.props.onClickLink}
+                  onCreateLink={this.props.onCreateLink}
+                  onShowToast={this.props.onShowToast}
+                />
+                <LinkToolbar
+                  isActive={this.state.linkMenuOpen}
+                  onCreateLink={this.props.onCreateLink}
+                  onSearchLink={this.props.onSearchLink}
+                  onClickLink={this.props.onClickLink}
+                  onClose={this.handleCloseLinkMenu}
+                />
+                <EmojiMenu
+                  view={this.view}
+                  commands={this.commands}
+                  dictionary={dictionary}
+                  rtl={isRTL}
+                  onShowToast={this.props.onShowToast}
+                  isActive={this.state.emojiMenuOpen}
+                  search={this.state.blockMenuSearch}
+                  onClose={this.handleCloseEmojiMenu}
+                />
+                <BlockMenu
+                  view={this.view}
+                  commands={this.commands}
+                  dictionary={dictionary}
+                  rtl={isRTL}
+                  isActive={this.state.blockMenuOpen}
+                  search={this.state.blockMenuSearch}
+                  onClose={this.handleCloseBlockMenu}
+                  uploadFile={this.props.uploadFile}
+                  onLinkToolbarOpen={this.handleOpenLinkMenu}
+                  onFileUploadStart={this.props.onFileUploadStart}
+                  onFileUploadStop={this.props.onFileUploadStop}
+                  onShowToast={this.props.onShowToast}
+                  embeds={this.props.embeds}
+                />
+              </>
+            )}
+          </Flex>
+        </EditorContext.Provider>
+      </PortalContext.Provider>
     );
   }
 }
 
-const EditorWithTheme = React.forwardRef<Editor, Props>((props: Props, ref) => {
-  return (
-    <WithTheme>
-      {(theme) => <Editor theme={theme} {...props} ref={ref} />}
-    </WithTheme>
-  );
-});
+const EditorContainer = styled(Styles)<{ focusedCommentId?: string }>`
+  ${(props) =>
+    props.focusedCommentId &&
+    css`
+      #comment-${props.focusedCommentId} {
+        background: ${transparentize(0.5, props.theme.brand.marine)};
+      }
+    `}
+`;
 
-export default EditorWithTheme;
+const LazyLoadedEditor = React.forwardRef<Editor, Props>(
+  (props: Props, ref) => {
+    return (
+      <WithTheme>
+        {(theme) => <Editor theme={theme} {...props} ref={ref} />}
+      </WithTheme>
+    );
+  }
+);
+
+export default LazyLoadedEditor;

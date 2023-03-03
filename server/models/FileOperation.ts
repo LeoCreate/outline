@@ -1,3 +1,4 @@
+import { Op, WhereOptions } from "sequelize";
 import {
   ForeignKey,
   DefaultScope,
@@ -7,11 +8,16 @@ import {
   Table,
   DataType,
 } from "sequelize-typescript";
-import { deleteFromS3 } from "@server/utils/s3";
+import {
+  FileOperationFormat,
+  FileOperationState,
+  FileOperationType,
+} from "@shared/types";
+import { deleteFromS3, getFileByKey } from "@server/utils/s3";
 import Collection from "./Collection";
 import Team from "./Team";
 import User from "./User";
-import BaseModel from "./base/BaseModel";
+import IdModel from "./base/IdModel";
 import Fix from "./decorators/Fix";
 
 @DefaultScope(() => ({
@@ -30,14 +36,15 @@ import Fix from "./decorators/Fix";
 }))
 @Table({ tableName: "file_operations", modelName: "file_operation" })
 @Fix
-class FileOperation extends BaseModel {
-  @Column(DataType.ENUM("import", "export"))
-  type: "import" | "export";
+class FileOperation extends IdModel {
+  @Column(DataType.ENUM(...Object.values(FileOperationType)))
+  type: FileOperationType;
 
-  @Column(
-    DataType.ENUM("creating", "uploading", "complete", "error", "expired")
-  )
-  state: "creating" | "uploading" | "complete" | "error" | "expired";
+  @Column(DataType.STRING)
+  format: FileOperationFormat;
+
+  @Column(DataType.ENUM(...Object.values(FileOperationState)))
+  state: FileOperationState;
 
   @Column
   key: string;
@@ -51,11 +58,27 @@ class FileOperation extends BaseModel {
   @Column(DataType.BIGINT)
   size: number;
 
+  /**
+   * Mark the current file operation as expired and remove the file from storage.
+   */
   expire = async function () {
     this.state = "expired";
-    await deleteFromS3(this.key);
+    try {
+      await deleteFromS3(this.key);
+    } catch (err) {
+      if (err.retryable) {
+        throw err;
+      }
+    }
     await this.save();
   };
+
+  /**
+   * The file operation contents as a readable stream.
+   */
+  get stream() {
+    return getFileByKey(this.key);
+  }
 
   // hooks
 
@@ -86,6 +109,30 @@ class FileOperation extends BaseModel {
   @ForeignKey(() => Collection)
   @Column(DataType.UUID)
   collectionId: string;
+
+  /**
+   * Count the number of export file operations for a given team after a point
+   * in time.
+   *
+   * @param teamId The team id
+   * @param startDate The start time
+   * @returns The number of file operations
+   */
+  static async countExportsAfterDateTime(
+    teamId: string,
+    startDate: Date,
+    where: WhereOptions<FileOperation> = {}
+  ): Promise<number> {
+    return this.count({
+      where: {
+        teamId,
+        createdAt: {
+          [Op.gt]: startDate,
+        },
+        ...where,
+      },
+    });
+  }
 }
 
 export default FileOperation;

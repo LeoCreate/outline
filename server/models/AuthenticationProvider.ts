@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, SaveOptions } from "sequelize";
 import {
   BelongsTo,
   Column,
@@ -12,10 +12,15 @@ import {
   IsUUID,
   PrimaryKey,
 } from "sequelize-typescript";
+import env from "@server/env";
+import AzureClient from "@server/utils/azure";
+import GoogleClient from "@server/utils/google";
+import OIDCClient from "@server/utils/oidc";
 import { ValidationError } from "../errors";
 import Team from "./Team";
 import UserAuthentication from "./UserAuthentication";
 import Fix from "./decorators/Fix";
+import Length from "./validators/Length";
 
 @Table({
   tableName: "authentication_providers",
@@ -30,6 +35,10 @@ class AuthenticationProvider extends Model {
   @Column(DataType.UUID)
   id: string;
 
+  @Length({
+    max: 255,
+    msg: "name must be 255 characters or less",
+  })
   @Column
   name: string;
 
@@ -37,6 +46,10 @@ class AuthenticationProvider extends Model {
   @Column
   enabled: boolean;
 
+  @Length({
+    max: 255,
+    msg: "providerId must be 255 characters or less",
+  })
   @Column
   providerId: string;
 
@@ -57,9 +70,37 @@ class AuthenticationProvider extends Model {
 
   // instance methods
 
-  disable = async () => {
+  /**
+   * Create an OAuthClient for this provider, if possible.
+   *
+   * @returns A configured OAuthClient instance
+   */
+  get oauthClient() {
+    switch (this.name) {
+      case "google":
+        return new GoogleClient(
+          env.GOOGLE_CLIENT_ID || "",
+          env.GOOGLE_CLIENT_SECRET || ""
+        );
+      case "azure":
+        return new AzureClient(
+          env.AZURE_CLIENT_ID || "",
+          env.AZURE_CLIENT_SECRET || ""
+        );
+      case "oidc":
+        return new OIDCClient(
+          env.OIDC_CLIENT_ID || "",
+          env.OIDC_CLIENT_SECRET || ""
+        );
+      default:
+        return undefined;
+    }
+  }
+
+  disable = async (options?: SaveOptions<AuthenticationProvider>) => {
     const res = await (this
       .constructor as typeof AuthenticationProvider).findAndCountAll({
+      ...options,
       where: {
         teamId: this.teamId,
         enabled: true,
@@ -71,18 +112,24 @@ class AuthenticationProvider extends Model {
     });
 
     if (res.count >= 1) {
-      return this.update({
-        enabled: false,
-      });
+      return this.update(
+        {
+          enabled: false,
+        },
+        options
+      );
     } else {
       throw ValidationError("At least one authentication provider is required");
     }
   };
 
-  enable = () => {
-    return this.update({
-      enabled: true,
-    });
+  enable = (options?: SaveOptions<AuthenticationProvider>) => {
+    return this.update(
+      {
+        enabled: true,
+      },
+      options
+    );
   };
 }
 

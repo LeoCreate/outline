@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/react";
 import { observable } from "mobx";
 import { observer } from "mobx-react";
 import * as React from "react";
@@ -10,9 +9,10 @@ import CenteredContent from "~/components/CenteredContent";
 import PageTitle from "~/components/PageTitle";
 import Text from "~/components/Text";
 import env from "~/env";
+import Logger from "~/utils/Logger";
+import isCloudHosted from "~/utils/isCloudHosted";
 
 type Props = WithTranslation & {
-  children: React.ReactNode;
   reloadOnChunkMissing?: boolean;
 };
 
@@ -26,12 +26,11 @@ class ErrorBoundary extends React.Component<Props> {
 
   componentDidCatch(error: Error) {
     this.error = error;
-    console.error(error);
 
     if (
       this.props.reloadOnChunkMissing &&
       error.message &&
-      error.message.match(/chunk/)
+      error.message.match(/dynamically imported module/)
     ) {
       // If the editor bundle fails to load then reload the entire window. This
       // can happen if a deploy happens between the user loading the initial JS
@@ -40,9 +39,7 @@ class ErrorBoundary extends React.Component<Props> {
       return;
     }
 
-    if (env.SENTRY_DSN) {
-      Sentry.captureException(error);
-    }
+    Logger.error("ErrorBoundary", error);
   }
 
   handleReload = () => {
@@ -62,8 +59,10 @@ class ErrorBoundary extends React.Component<Props> {
 
     if (this.error) {
       const error = this.error;
-      const isReported = !!env.SENTRY_DSN && env.DEPLOYMENT === "hosted";
-      const isChunkError = this.error.message.match(/chunk/);
+      const isReported = !!env.SENTRY_DSN && isCloudHosted;
+      const isChunkError = this.error.message.match(
+        /dynamically imported module/
+      );
 
       if (isChunkError) {
         return (

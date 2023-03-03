@@ -1,15 +1,19 @@
 import Document from "@server/models/Document";
 import {
   buildDocument,
+  buildDraftDocument,
   buildCollection,
   buildTeam,
   buildUser,
 } from "@server/test/factories";
-import { flushdb, seed } from "@server/test/support";
+import { setupTestDatabase, seed } from "@server/test/support";
 import slugify from "@server/utils/slugify";
 
-beforeEach(() => flushdb());
-beforeEach(jest.resetAllMocks);
+setupTestDatabase();
+
+beforeEach(() => {
+  jest.resetAllMocks();
+});
 
 describe("#getSummary", () => {
   test("should strip markdown", async () => {
@@ -26,334 +30,10 @@ paragraph 2`,
     const document = await buildDocument({
       version: 0,
       text: `# Heading
-      
+
 *paragraph*`,
     });
     expect(document.getSummary()).toBe("paragraph");
-  });
-});
-
-describe("#migrateVersion", () => {
-  test("should maintain empty paragraph under headings", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `# Heading
-
-paragraph`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`# Heading
-
-paragraph`);
-  });
-
-  test("should add breaks under headings with extra paragraphs", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `# Heading
-
-
-paragraph`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`# Heading
-
-
-\\
-paragraph`);
-  });
-
-  test("should add breaks between paragraphs", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `paragraph
-
-paragraph`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`paragraph
-
-\\
-paragraph`);
-  });
-
-  test("should add breaks for multiple empty paragraphs", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `paragraph
-
-
-paragraph`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`paragraph
-
-\\
-\\
-paragraph`);
-  });
-
-  test("should add breaks with non-latin characters", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `除。
-
-通`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`除。
-
-\\
-通`);
-  });
-
-  test("should update task list formatting", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `[ ] list item
-`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`- [ ] list item
-`);
-  });
-
-  test("should update task list with multiple items", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `[ ] list item
-[ ] list item 2
-`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`- [ ] list item
-- [ ] list item 2
-`);
-  });
-
-  test("should update checked task list formatting", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `[x] list item
-`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`- [x] list item
-`);
-  });
-
-  test("should update nested task list formatting", async () => {
-    const document = await buildDocument({
-      version: 1,
-      text: `[x] list item
-  [ ] list item
-  [x] list item
-`,
-    });
-    await document.migrateVersion();
-    expect(document.text).toBe(`- [x] list item
-   - [ ] list item
-   - [x] list item
-`);
-  });
-});
-
-describe("#searchForTeam", () => {
-  test("should return search results from public collections", async () => {
-    const team = await buildTeam();
-    const collection = await buildCollection({
-      teamId: team.id,
-    });
-    const document = await buildDocument({
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test",
-    });
-    const { results } = await Document.searchForTeam(team, "test");
-    expect(results.length).toBe(1);
-    expect(results[0].document?.id).toBe(document.id);
-  });
-
-  test("should not return search results from private collections", async () => {
-    const team = await buildTeam();
-    const collection = await buildCollection({
-      permission: null,
-      teamId: team.id,
-    });
-    await buildDocument({
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test",
-    });
-    const { results } = await Document.searchForTeam(team, "test");
-    expect(results.length).toBe(0);
-  });
-
-  test("should handle no collections", async () => {
-    const team = await buildTeam();
-    const { results } = await Document.searchForTeam(team, "test");
-    expect(results.length).toBe(0);
-  });
-
-  test("should handle backslashes in search term", async () => {
-    const team = await buildTeam();
-    const { results } = await Document.searchForTeam(team, "\\\\");
-    expect(results.length).toBe(0);
-  });
-
-  test("should return the total count of search results", async () => {
-    const team = await buildTeam();
-    const collection = await buildCollection({
-      teamId: team.id,
-    });
-    await buildDocument({
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test number 1",
-    });
-    await buildDocument({
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test number 2",
-    });
-    const { totalCount } = await Document.searchForTeam(team, "test");
-    expect(totalCount).toBe("2");
-  });
-
-  test("should return the document when searched with their previous titles", async () => {
-    const team = await buildTeam();
-    const collection = await buildCollection({
-      teamId: team.id,
-    });
-    const document = await buildDocument({
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test number 1",
-    });
-    document.title = "change";
-    await document.save();
-    const { totalCount } = await Document.searchForTeam(team, "test number");
-    expect(totalCount).toBe("1");
-  });
-
-  test("should not return the document when searched with neither the titles nor the previous titles", async () => {
-    const team = await buildTeam();
-    const collection = await buildCollection({
-      teamId: team.id,
-    });
-    const document = await buildDocument({
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test number 1",
-    });
-    document.title = "change";
-    await document.save();
-    const { totalCount } = await Document.searchForTeam(
-      team,
-      "title doesn't exist"
-    );
-    expect(totalCount).toBe("0");
-  });
-});
-
-describe("#searchForUser", () => {
-  test("should return search results from collections", async () => {
-    const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
-    const collection = await buildCollection({
-      userId: user.id,
-      teamId: team.id,
-    });
-    const document = await buildDocument({
-      userId: user.id,
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test",
-    });
-    const { results } = await Document.searchForUser(user, "test");
-    expect(results.length).toBe(1);
-    expect(results[0].document?.id).toBe(document.id);
-  });
-
-  test("should handle no collections", async () => {
-    const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
-    const { results } = await Document.searchForUser(user, "test");
-    expect(results.length).toBe(0);
-  });
-
-  test("should return the total count of search results", async () => {
-    const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
-    const collection = await buildCollection({
-      userId: user.id,
-      teamId: team.id,
-    });
-    await buildDocument({
-      userId: user.id,
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test number 1",
-    });
-    await buildDocument({
-      userId: user.id,
-      teamId: team.id,
-      collectionId: collection.id,
-      title: "test number 2",
-    });
-    const { totalCount } = await Document.searchForUser(user, "test");
-    expect(totalCount).toBe("2");
-  });
-
-  test("should return the document when searched with their previous titles", async () => {
-    const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
-    const collection = await buildCollection({
-      teamId: team.id,
-      userId: user.id,
-    });
-    const document = await buildDocument({
-      teamId: team.id,
-      userId: user.id,
-      collectionId: collection.id,
-      title: "test number 1",
-    });
-    document.title = "change";
-    await document.save();
-    const { totalCount } = await Document.searchForUser(user, "test number");
-    expect(totalCount).toBe("1");
-  });
-
-  test("should not return the document when searched with neither the titles nor the previous titles", async () => {
-    const team = await buildTeam();
-    const user = await buildUser({
-      teamId: team.id,
-    });
-    const collection = await buildCollection({
-      teamId: team.id,
-      userId: user.id,
-    });
-    const document = await buildDocument({
-      teamId: team.id,
-      userId: user.id,
-      collectionId: collection.id,
-      title: "test number 1",
-    });
-    document.title = "change";
-    await document.save();
-    const { totalCount } = await Document.searchForUser(
-      user,
-      "title doesn't exist"
-    );
-    expect(totalCount).toBe("0");
   });
 });
 
@@ -395,6 +75,17 @@ describe("#delete", () => {
     expect(newDocument?.lastModifiedById).toBe(user.id);
     expect(newDocument?.deletedAt).toBeTruthy();
   });
+
+  it("should delete draft without collection", async () => {
+    const user = await buildUser();
+    const document = await buildDraftDocument();
+    await document.delete(user.id);
+    const deletedDocument = await Document.findByPk(document.id, {
+      paranoid: false,
+    });
+    expect(deletedDocument?.lastModifiedById).toBe(user.id);
+    expect(deletedDocument?.deletedAt).toBeTruthy();
+  });
 });
 
 describe("#save", () => {
@@ -422,10 +113,73 @@ describe("#save", () => {
   });
 });
 
+describe("#getChildDocumentIds", () => {
+  test("should return empty array if no children", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({
+      teamId: team.id,
+    });
+    const collection = await buildCollection({
+      userId: user.id,
+      teamId: team.id,
+    });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: team.id,
+      collectionId: collection.id,
+      title: "test",
+    });
+    const results = await document.getChildDocumentIds();
+    expect(results.length).toBe(0);
+  });
+
+  test("should return nested child document ids", async () => {
+    const team = await buildTeam();
+    const user = await buildUser({
+      teamId: team.id,
+    });
+    const collection = await buildCollection({
+      userId: user.id,
+      teamId: team.id,
+    });
+    const document = await buildDocument({
+      userId: user.id,
+      teamId: team.id,
+      collectionId: collection.id,
+      title: "test",
+    });
+    const document2 = await buildDocument({
+      userId: user.id,
+      teamId: team.id,
+      collectionId: collection.id,
+      parentDocumentId: document.id,
+      title: "test",
+    });
+    const document3 = await buildDocument({
+      userId: user.id,
+      teamId: team.id,
+      collectionId: collection.id,
+      parentDocumentId: document2.id,
+      title: "test",
+    });
+    const results = await document.getChildDocumentIds();
+    expect(results.length).toBe(2);
+    expect(results[0]).toBe(document2.id);
+    expect(results[1]).toBe(document3.id);
+  });
+});
+
 describe("#findByPk", () => {
   test("should return document when urlId is correct", async () => {
     const { document } = await seed();
     const id = `${slugify(document.title)}-${document.urlId}`;
+    const response = await Document.findByPk(id);
+    expect(response?.id).toBe(document.id);
+  });
+
+  test("should return document when urlId is given without the slug prefix", async () => {
+    const { document } = await seed();
+    const id = document.urlId;
     const response = await Document.findByPk(id);
     expect(response?.id).toBe(document.id);
   });

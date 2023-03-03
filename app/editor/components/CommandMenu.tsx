@@ -2,14 +2,19 @@ import { capitalize } from "lodash";
 import { findDomRefAtPos, findParentNode } from "prosemirror-utils";
 import { EditorView } from "prosemirror-view";
 import * as React from "react";
-import { Portal } from "react-portal";
+import { Trans } from "react-i18next";
 import { VisuallyHidden } from "reakit/VisuallyHidden";
 import styled from "styled-components";
 import insertFiles from "@shared/editor/commands/insertFiles";
+import { EmbedDescriptor } from "@shared/editor/embeds";
 import { CommandFactory } from "@shared/editor/lib/Extension";
 import filterExcessSeparators from "@shared/editor/lib/filterExcessSeparators";
-import { EmbedDescriptor, MenuItem, ToastType } from "@shared/editor/types";
-import getDataTransferFiles from "@shared/utils/getDataTransferFiles";
+import { MenuItem } from "@shared/editor/types";
+import { depths } from "@shared/styles";
+import { getEventFiles } from "@shared/utils/files";
+import { AttachmentValidation } from "@shared/validations";
+import { Portal } from "~/components/Portal";
+import Scrollable from "~/components/Scrollable";
 import { Dictionary } from "~/hooks/useDictionary";
 import Input from "./Input";
 
@@ -30,9 +35,9 @@ export type Props<T extends MenuItem = MenuItem> = {
   uploadFile?: (file: File) => Promise<string>;
   onFileUploadStart?: () => void;
   onFileUploadStop?: () => void;
-  onShowToast: (message: string, id: string) => void;
+  onShowToast: (message: string) => void;
   onLinkToolbarOpen?: () => void;
-  onClose: () => void;
+  onClose: (insertNewLine?: boolean) => void;
   onClearSearch: () => void;
   embeds?: EmbedDescriptor[];
   renderMenuItem: (
@@ -57,7 +62,7 @@ type State = {
   selectedIndex: number;
 };
 
-class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
+class CommandMenu<T extends MenuItem> extends React.Component<Props<T>, State> {
   menuRef = React.createRef<HTMLDivElement>();
   inputRef = React.createRef<HTMLInputElement>();
 
@@ -71,10 +76,11 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
   };
 
   componentDidMount() {
+    window.addEventListener("mousedown", this.handleMouseDown);
     window.addEventListener("keydown", this.handleKeyDown);
   }
 
-  shouldComponentUpdate(nextProps: Props, nextState: State) {
+  shouldComponentUpdate(nextProps: Props<T>, nextState: State) {
     return (
       nextProps.search !== this.props.search ||
       nextProps.isActive !== this.props.isActive ||
@@ -82,7 +88,7 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
     );
   }
 
-  componentDidUpdate(prevProps: Props) {
+  componentDidUpdate(prevProps: Props<T>) {
     if (!prevProps.isActive && this.props.isActive) {
       // reset scroll position to top when opening menu as the contents are
       // hidden, not unrendered
@@ -102,8 +108,20 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
   }
 
   componentWillUnmount() {
+    window.removeEventListener("mousedown", this.handleMouseDown);
     window.removeEventListener("keydown", this.handleKeyDown);
   }
+
+  handleMouseDown = (event: MouseEvent) => {
+    if (
+      !this.menuRef.current ||
+      this.menuRef.current.contains(event.target as Element)
+    ) {
+      return;
+    }
+
+    this.props.onClose();
+  };
 
   handleKeyDown = (event: KeyboardEvent) => {
     if (!this.props.isActive) {
@@ -119,7 +137,7 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
       if (item) {
         this.insertItem(item);
       } else {
-        this.props.onClose();
+        this.props.onClose(true);
       }
     }
 
@@ -138,7 +156,7 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
         this.setState({
           selectedIndex: Math.max(
             0,
-            prev && prev.name === "separator" ? prevIndex - 1 : prevIndex
+            prev?.name === "separator" ? prevIndex - 1 : prevIndex
           ),
         });
       } else {
@@ -161,7 +179,7 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
 
         this.setState({
           selectedIndex: Math.min(
-            next && next.name === "separator" ? nextIndex + 1 : nextIndex,
+            next?.name === "separator" ? nextIndex + 1 : nextIndex,
             total
           ),
         });
@@ -178,7 +196,9 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
   insertItem = (item: any) => {
     switch (item.name) {
       case "image":
-        return this.triggerFilePick("image/*");
+        return this.triggerFilePick(
+          AttachmentValidation.imageContentTypes.join(", ")
+        );
       case "attachment":
         return this.triggerFilePick("*");
       case "embed":
@@ -215,10 +235,7 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
       const matches = this.state.insertItem.matcher(href);
 
       if (!matches) {
-        this.props.onShowToast(
-          this.props.dictionary.embedInvalidLink,
-          ToastType.Error
-        );
+        this.props.onShowToast(this.props.dictionary.embedInvalidLink);
         return;
       }
 
@@ -273,8 +290,8 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
     this.setState({ insertItem: item });
   };
 
-  handleFilePicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = getDataTransferFiles(event);
+  handleFilesPicked = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = getEventFiles(event);
 
     const {
       view,
@@ -389,7 +406,16 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
     const { top, bottom, right } = paragraph.node.getBoundingClientRect();
     const margin = 24;
 
-    let leftPos = left + window.scrollX;
+    const offsetParent = ref?.offsetParent
+      ? ref.offsetParent.getBoundingClientRect()
+      : ({
+          width: 0,
+          height: 0,
+          top: 0,
+          left: 0,
+        } as DOMRect);
+
+    let leftPos = left - offsetParent.left;
     if (props.rtl && ref) {
       leftPos = right - ref.scrollWidth;
     }
@@ -397,14 +423,14 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
     if (startPos.top - offsetHeight > margin) {
       return {
         left: leftPos,
-        top: undefined,
-        bottom: window.innerHeight - top - window.scrollY,
+        top: top - offsetParent.top - offsetHeight,
+        bottom: undefined,
         isAbove: false,
       };
     } else {
       return {
         left: leftPos,
-        top: bottom + window.scrollY,
+        top: bottom - offsetParent.top,
         bottom: undefined,
         isAbove: true,
       };
@@ -419,23 +445,27 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
       commands,
       filterable = true,
     } = this.props;
-    let items: (EmbedDescriptor | MenuItem)[] = this.props.items;
+    let items: (EmbedDescriptor | MenuItem)[] = [...this.props.items];
     const embedItems: EmbedDescriptor[] = [];
 
     for (const embed of embeds) {
-      if (embed.title && embed.icon) {
-        embedItems.push({
-          ...embed,
-          name: "embed",
-        });
+      if (embed.title && embed.visible !== false) {
+        embedItems.push(
+          new EmbedDescriptor({
+            ...embed,
+            name: "embed",
+          })
+        );
       }
     }
 
     if (embedItems.length) {
-      items.push({
-        name: "separator",
-      });
-      items = items.concat(embedItems);
+      items = items.concat(
+        {
+          name: "separator",
+        },
+        embedItems
+      );
     }
 
     const filtered = items.filter((item) => {
@@ -486,6 +516,7 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
           id={this.props.id || "block-menu-container"}
           active={isActive}
           ref={this.menuRef}
+          hiddenScrollbars
           {...positioning}
         >
           {insertItem ? (
@@ -545,11 +576,15 @@ class CommandMenu<T = MenuItem> extends React.Component<Props<T>, State> {
           )}
           {uploadFile && (
             <VisuallyHidden>
-              <input
-                type="file"
-                ref={this.inputRef}
-                onChange={this.handleFilePicked}
-              />
+              <label>
+                <Trans>Import document</Trans>
+                <input
+                  type="file"
+                  ref={this.inputRef}
+                  onChange={this.handleFilesPicked}
+                  multiple
+                />
+              </label>
             </VisuallyHidden>
           )}
         </Wrapper>
@@ -563,16 +598,16 @@ const LinkInputWrapper = styled.div`
 `;
 
 const LinkInput = styled(Input)`
-  height: 36px;
+  height: 32px;
   width: 100%;
-  color: ${(props) => props.theme.blockToolbarText};
+  color: ${(props) => props.theme.textSecondary};
 `;
 
 const List = styled.ol`
   list-style: none;
   text-align: left;
   height: 100%;
-  padding: 8px 0;
+  padding: 6px;
   margin: 0;
 `;
 
@@ -587,26 +622,26 @@ const Empty = styled.div`
   color: ${(props) => props.theme.textSecondary};
   font-weight: 500;
   font-size: 14px;
-  height: 36px;
+  height: 32px;
   padding: 0 16px;
 `;
 
-export const Wrapper = styled.div<{
+export const Wrapper = styled(Scrollable)<{
   active: boolean;
   top?: number;
   bottom?: number;
   left?: number;
   isAbove: boolean;
 }>`
-  color: ${(props) => props.theme.text};
+  color: ${(props) => props.theme.textSecondary};
   font-family: ${(props) => props.theme.fontFamily};
   position: absolute;
-  z-index: ${(props) => props.theme.zIndex + 100};
+  z-index: ${depths.editorToolbar};
   ${(props) => props.top !== undefined && `top: ${props.top}px`};
   ${(props) => props.bottom !== undefined && `bottom: ${props.bottom}px`};
   left: ${(props) => props.left}px;
-  background-color: ${(props) => props.theme.blockToolbarBackground};
-  border-radius: 4px;
+  background: ${(props) => props.theme.menuBackground};
+  border-radius: 6px;
   box-shadow: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px,
     rgba(0, 0, 0, 0.08) 0px 4px 8px, rgba(0, 0, 0, 0.08) 0px 2px 4px;
   opacity: 0;
@@ -618,10 +653,9 @@ export const Wrapper = styled.div<{
   box-sizing: border-box;
   pointer-events: none;
   white-space: nowrap;
-  width: 300px;
+  width: 280px;
+  height: auto;
   max-height: 324px;
-  overflow: hidden;
-  overflow-y: auto;
 
   * {
     box-sizing: border-box;
@@ -630,7 +664,7 @@ export const Wrapper = styled.div<{
   hr {
     border: 0;
     height: 0;
-    border-top: 1px solid ${(props) => props.theme.blockToolbarDivider};
+    border-top: 1px solid ${(props) => props.theme.divider};
   }
 
   ${({ active, isAbove }) =>

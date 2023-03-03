@@ -24,7 +24,7 @@ function GroupMenu({ group, onMembers }: Props) {
   });
   const [editModalOpen, setEditModalOpen] = React.useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = React.useState(false);
-  const can = usePolicy(group.id);
+  const can = usePolicy(group);
 
   return (
     <>
@@ -39,6 +39,7 @@ function GroupMenu({ group, onMembers }: Props) {
         title={t("Delete group")}
         onRequestClose={() => setDeleteModalOpen(false)}
         isOpen={deleteModalOpen}
+        isCentered
       >
         <GroupDelete group={group} onSubmit={() => setDeleteModalOpen(false)} />
       </Modal>
